@@ -289,6 +289,7 @@ def simplify_roman_numeral_to_31class(roman_str: str):
 
     # Remove inversion suffixes (figured bass numbers)
     # Must handle augmented chords specially: III+43 -> III+, III+64 -> III+
+    base_clean = re.sub(r'\[.*?\]', '', base_clean)  # viio[b3] -> viio (remove brackets)
     base_clean = re.sub(r'\+\d+$', '+', base_clean)  # III+43 -> III+, V+6 -> V+
     base_clean = re.sub(r'6/5$', '', base_clean)  # sixth-five
     base_clean = re.sub(r'6/4$', '', base_clean)  # six-four
@@ -330,6 +331,8 @@ def simplify_roman_numeral_to_31class(roman_str: str):
         'Io': 'I',           # Diminished I doesn't really exist
         'IVo': 'IV',         # Diminished IV doesn't really exist
         'Vo': 'V',           # Diminished V is rare
+        'vo': 'V',           # Lowercase minor v -> major V
+        'v': 'V',            # Lowercase minor v -> major V
         'I6': 'I',           # Already stripped but just in case
         'IV6': 'IV',
         'V6': 'V',
@@ -338,6 +341,19 @@ def simplify_roman_numeral_to_31class(roman_str: str):
         'iii6': 'iii',
         'Fr': 'Fr7',         # French augmented sixth needs the 7
         'Ger': 'Ger7',       # German augmented sixth needs the 7
+        # Map uppercase III/VII to lowercase (vocab only has lowercase for these degrees)
+        'III': 'iii',
+        'III7': 'iii7',
+        'VII': 'viio',       # Major VII is extremely rare, map to viio
+        # Sharp-altered scale degrees
+        '#io': 'iio',        # Sharp i diminished -> regular ii diminished
+        '#iio': 'iii',       # Sharp ii diminished -> iii
+        '#ivo': 'V',         # Sharp iv diminished -> v diminished -> V (direct)
+        '#vio': 'viio',      # Sharp vi diminished -> vii diminished
+        '#vio7': 'viio7',    # Sharp vi dim7 -> vii dim7
+        '#io7': 'iio',       # Sharp i dim7 -> ii dim
+        # Special notation
+        '||': 'I',           # Cadence marker -> map to I
     }
 
     if base_clean in fallback_map:
