@@ -31,7 +31,7 @@ class AugmentedGraphDatamodule(LightningDataModule):
         self.normalize_features = True
         self.version = version
         data_source = AugmentedNetChordGraphDataset(
-            force_reload=self.force_reload, nprocs=self.num_workers,
+            force_reload=self.force_reload, nprocs=max(1, self.num_workers),
             include_synth=include_synth, num_tasks=num_tasks, collection=collection
         ) if version=="v1.0.0" else Augmented2022ChordGraphDataset(
                     force_reload=self.force_reload, nprocs=self.num_workers,

@@ -223,8 +223,7 @@ class AugmentedNetChordGraphDataset(ChordGraphDataset):
 
         if os.path.join("AugmentedNetChordDataset", "dataset-synth") in score_fn and os.path.basename(os.path.dirname(score_fn)) in ["test"]:
             return
-        collection = "training" if os.path.basename(
-            os.path.dirname(score_fn)) == "validation" else os.path.basename(os.path.dirname(score_fn))
+        collection = os.path.basename(os.path.dirname(score_fn))        
         if collection == "test":
             note_array, labels = time_divided_tsv_to_part(score_fn, transpose=False)
             data_to_graph(note_array, labels, collection, name, save_path=self.save_path)
@@ -321,8 +320,7 @@ class Augmented2022ChordGraphDataset(ChordGraphDataset):
         if os.path.join("AugmentedNetLatestChordDataset", "dataset-synth") in score_fn and os.path.basename(
                 os.path.dirname(score_fn)) in ["test"]:
             return
-        collection = "training" if os.path.basename(
-            os.path.dirname(score_fn)) == "validation" else os.path.basename(os.path.dirname(score_fn))
+        collection = os.path.basename(os.path.dirname(score_fn))        
         if collection == "test":
             note_array, labels = time_divided_tsv_to_part(score_fn, transpose=False, version="latest")
             data_to_graph(note_array, labels, collection, name, save_path=self.save_path)

@@ -1,0 +1,25 @@
+activation: !!python/name:torch.nn.functional.relu ''
+device: 0
+dropout: 0.5
+in_feats: 83
+lr: 0.0005
+n_hidden: 256
+n_layers: 1
+tasks:
+  bass: 35
+  degree1: 22
+  degree2: 22
+  hrhythm: 2
+  inversion: 4
+  localkey: 35
+  pcset: 94
+  quality: 16
+  romanNumeral: 76
+  root: 35
+  tonkey: 35
+use_gradnorm: false
+use_jk: false
+use_nade: false
+use_rotograd: false
+weight_decay: 0.0035
+weight_loss: true
