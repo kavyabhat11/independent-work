@@ -7,12 +7,13 @@ import pandas as pd
 import numpy as np
 import sys
 from pathlib import Path
-from chordgnn.utils.chord_representations_latest import COMMON_ROMAN_NUMERALS, CHORD_QUALITIES
+from chordgnn.utils.chord_representations_latest import RomanNumeral31, ChordQuality11
 
 def check_tsv_vocab(tsv_dir):
     """Check all TSVs for vocab compatibility."""
-    vocab_rn = set(COMMON_ROMAN_NUMERALS)
-    vocab_quality = set(CHORD_QUALITIES)
+    # Use the actual classList from the encoder classes
+    vocab_rn = set(RomanNumeral31.classList)
+    vocab_quality = set(ChordQuality11.classList)
 
     tsv_path = Path(tsv_dir)
     all_tsvs = list(tsv_path.rglob("*.tsv"))
