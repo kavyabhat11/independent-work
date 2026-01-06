@@ -1,0 +1,497 @@
+#!/usr/bin/env python3
+"""
+Finetune pretrained ChordGNN on Mozart data (FIXED VERSION)
+
+CRITICAL FIXES:
+1. Loads pretrained checkpoint FIRST to detect vocab size
+2. Uses pretrained tasks (not datamodule tasks) to ensure architecture matches
+3. Sets DATA_VERSION automatically based on pretrained romanNumeral vocab
+4. Uses much lower learning rate (1e-5) to prevent catastrophic forgetting
+5. Matches all architecture params (n_layers, n_hidden) from pretrained
+6. Increased early stopping patience for small datasets
+
+What this script does:
+1) Loads pretrained checkpoint to inspect vocab and architecture
+2) Sets DATA_VERSION to match pretrained vocab (31 vs 76 classes)
+3) Rebuilds Mozart TSV cache into the dataset cache directory
+4) Loads datamodule with CORRECT version (but ignores its task definitions)
+5) Builds model using PRETRAINED tasks (ensures exact architecture match)
+6) Loads pretrained weights (encoder + heads all load successfully now)
+7) Sanitizes NaN/Inf in batches
+8) Trains with lower LR, EarlyStopping, ModelCheckpoint
+9) Tests and logs to W&B
+
+Run:
+  python finetune_from_checkpoint_FIXED.py
+"""
+
+import os
+import glob
+import shutil
+
+import torch
+import chordgnn as st
+
+import wandb
+from pytorch_lightning.loggers import WandbLogger
+from pytorch_lightning import Trainer
+from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
+from pytorch_lightning import Callback
+
+
+print("\n" + "=" * 70)
+print("Mozart Finetuning (FIXED: Vocab-Matched + Lower LR + W&B)")
+print("=" * 70 + "\n")
+
+torch.manual_seed(0)
+
+# -------------------------
+# Config
+# -------------------------
+WANDB_ARTIFACT = "melkisedeath/chord_rec/model-kvd0jic5:v0"
+ARTIFACT_ROOT = "./artifacts"
+MOZART_ROOT = "./mozart_dataset"
+
+CACHE_ROOT = "/scratch/network/kb9520/chordgnn_data"
+CACHE = os.path.join(CACHE_ROOT, "AugmentedNetChordDataset", "dataset")
+
+# FIXED: Much lower learning rate for finetuning (was 5e-4, caused catastrophic forgetting)
+LR = 1e-5  # 50x smaller than before
+WEIGHT_DECAY = 1e-4  # Also reduced (was 3.5e-3)
+
+MAX_EPOCHS = 40
+BATCH_SIZE = 4
+NUM_WORKERS = 8
+NUM_TASKS = 11
+
+WANDB_PROJECT = "chord_rec"
+WANDB_RUN_NAME = "mozart-finetune-FIXED"
+
+
+# -------------------------
+# Step 1: Download pretrained checkpoint if needed
+# -------------------------
+print("=" * 70)
+print("STEP 1: Loading pretrained checkpoint")
+print("=" * 70 + "\n")
+
+# Construct expected local path
+artifact_basename = os.path.basename(WANDB_ARTIFACT)  # "model-kvd0jic5:v0"
+local_artifact_dir = os.path.join(ARTIFACT_ROOT, artifact_basename)
+expected_ckpt_path = os.path.join(local_artifact_dir, "model.ckpt")
+
+# Check if checkpoint exists locally
+if os.path.exists(expected_ckpt_path):
+    print(f"✓ Found local checkpoint: {expected_ckpt_path}")
+    PRETRAINED_CKPT = expected_ckpt_path
+else:
+    print(f"Checkpoint not found locally at: {expected_ckpt_path}")
+    print(f"Downloading from W&B: {WANDB_ARTIFACT}")
+
+    api = wandb.Api()
+    artifact = api.artifact(WANDB_ARTIFACT, type="model")
+    downloaded_dir = artifact.download(root=ARTIFACT_ROOT)
+
+    # Find the .ckpt file in downloaded directory
+    ckpt_files = glob.glob(os.path.join(downloaded_dir, "*.ckpt"))
+    if not ckpt_files:
+        raise FileNotFoundError(f"No .ckpt file found in downloaded artifact: {downloaded_dir}")
+
+    PRETRAINED_CKPT = ckpt_files[0]
+    print(f"✓ Downloaded to: {PRETRAINED_CKPT}\n")
+
+# -------------------------
+# Step 2: Inspect pretrained checkpoint to detect vocab
+# -------------------------
+print("=" * 70)
+print("STEP 2: Inspecting pretrained checkpoint to detect vocab")
+print("=" * 70 + "\n")
+
+print(f"Loading checkpoint: {PRETRAINED_CKPT}")
+ckpt = torch.load(PRETRAINED_CKPT, map_location="cpu")
+state_dict = ckpt["state_dict"]
+
+pretrained_hparams = {}
+if "hyper_parameters" in ckpt and isinstance(ckpt["hyper_parameters"], dict):
+    pretrained_hparams = ckpt["hyper_parameters"]
+
+pretrained_tasks = pretrained_hparams.get("tasks", None)
+if pretrained_tasks is None:
+    raise RuntimeError("Pretrained checkpoint missing 'hyper_parameters.tasks'")
+
+print("\nPretrained model task vocabulary sizes:")
+for task, size in pretrained_tasks.items():
+    marker = " ← CRITICAL!" if task == "romanNumeral" else ""
+    print(f"  {task:15s}: {size}{marker}")
+
+# CRITICAL FIX: Determine DATA_VERSION based on romanNumeral vocab
+if "romanNumeral" not in pretrained_tasks:
+    raise RuntimeError("Pretrained checkpoint missing 'romanNumeral' task!")
+
+rn_vocab_size = pretrained_tasks["romanNumeral"]
+
+if rn_vocab_size == 31:
+    DATA_VERSION = "v2.0.0"  # Loads Augmented2022ChordGraphDataset
+    print(f"\n✓ Pretrained uses romanNumeral: 31 classes")
+    print(f"  → Setting DATA_VERSION = '{DATA_VERSION}' (Augmented2022ChordGraphDataset)")
+elif rn_vocab_size == 76:
+    DATA_VERSION = "v1.0.0"  # Loads AugmentedNetChordGraphDataset
+    print(f"\n✓ Pretrained uses romanNumeral: 76 classes")
+    print(f"  → Setting DATA_VERSION = '{DATA_VERSION}' (AugmentedNetChordGraphDataset)")
+else:
+    raise RuntimeError(
+        f"Unknown romanNumeral vocab size: {rn_vocab_size}\n"
+        f"Expected 31 (Augmented2022) or 76 (AugmentedNet)"
+    )
+
+# Extract other pretrained architecture params
+pretrained_n_hidden = int(pretrained_hparams.get("n_hidden", 256))
+pretrained_n_layers = int(pretrained_hparams.get("n_layers", 1))  # default 1, not 2!
+pretrained_in_feats = int(pretrained_hparams.get("in_feats", 83))
+
+print(f"\nPretrained architecture:")
+print(f"  in_feats:  {pretrained_in_feats}")
+print(f"  n_hidden:  {pretrained_n_hidden}")
+print(f"  n_layers:  {pretrained_n_layers}")
+print()
+
+
+# -------------------------
+# Step 3: Setup Mozart data
+# -------------------------
+print("=" * 70)
+print("STEP 3: Setting up Mozart dataset cache")
+print("=" * 70 + "\n")
+
+if os.path.exists(CACHE):
+    shutil.rmtree(CACHE)
+
+os.makedirs(os.path.join(CACHE, "training"), exist_ok=True)
+os.makedirs(os.path.join(CACHE, "validation"), exist_ok=True)
+os.makedirs(os.path.join(CACHE, "test"), exist_ok=True)
+
+for tsv in glob.glob(f"{MOZART_ROOT}/training/*.tsv"):
+    shutil.copy(tsv, os.path.join(CACHE, "training"))
+for tsv in glob.glob(f"{MOZART_ROOT}/validation/*.tsv"):
+    shutil.copy(tsv, os.path.join(CACHE, "validation"))
+for tsv in glob.glob(f"{MOZART_ROOT}/test/*.tsv"):
+    shutil.copy(tsv, os.path.join(CACHE, "test"))
+
+train_ct = len(glob.glob(f"{CACHE}/training/*.tsv"))
+val_ct = len(glob.glob(f"{CACHE}/validation/*.tsv"))
+test_ct = len(glob.glob(f"{CACHE}/test/*.tsv"))
+print(f"✓ Data ready: {train_ct} train, {val_ct} val, {test_ct} test\n")
+
+
+# -------------------------
+# Step 4: Load datamodule (with correct version)
+# -------------------------
+print("=" * 70)
+print("STEP 4: Loading Mozart datamodule")
+print("=" * 70 + "\n")
+
+print(f"Loading datamodule with version='{DATA_VERSION}'...")
+datamodule = st.data.AugmentedGraphDatamodule(
+    num_workers=NUM_WORKERS,
+    include_synth=False,
+    num_tasks=NUM_TASKS,
+    collection="all",
+    batch_size=BATCH_SIZE,
+    version=DATA_VERSION,
+)
+datamodule.setup()
+
+print(f"✓ Training: {len(datamodule.dataset_train)} samples (with augmentation)")
+print(f"✓ Val: {len(datamodule.dataset_val)} samples")
+print(f"✓ Test: {len(datamodule.dataset_test)} samples")
+
+# Verify datamodule tasks match pretrained
+datamodule_tasks = datamodule.tasks
+print(f"\nDatamodule task vocab sizes:")
+for task, size in datamodule_tasks.items():
+    pretrained_size = pretrained_tasks.get(task, "MISSING")
+    match = "✓" if size == pretrained_size else "✗ MISMATCH!"
+    print(f"  {task:15s}: {size:3} (pretrained: {pretrained_size:3}) {match}")
+
+# Check for critical mismatches
+mismatches = []
+for task, size in datamodule_tasks.items():
+    if task in pretrained_tasks and size != pretrained_tasks[task]:
+        mismatches.append(f"{task}: datamodule={size}, pretrained={pretrained_tasks[task]}")
+
+if mismatches:
+    print("\n⚠ WARNING: Task vocab mismatches detected:")
+    for mm in mismatches:
+        print(f"  • {mm}")
+    print("\n  → We will use PRETRAINED tasks to build model (ignoring datamodule tasks)")
+else:
+    print("\n✓ All task vocabs match! Safe to use either.")
+
+print()
+
+
+# -------------------------
+# Step 5: W&B logger
+# -------------------------
+wandb_logger = WandbLogger(
+    project=WANDB_PROJECT,
+    name=WANDB_RUN_NAME,
+    log_model=True,
+)
+
+
+# -------------------------
+# Step 6: Build model using PRETRAINED tasks
+# -------------------------
+print("=" * 70)
+print("STEP 6: Building model with pretrained architecture")
+print("=" * 70 + "\n")
+
+# CRITICAL FIX: Use pretrained_tasks, NOT datamodule.tasks
+tasks = pretrained_tasks
+
+# Determine in_feats robustly (try pretrained first, then datamodule)
+if "in_feats" in pretrained_hparams:
+    in_feats = int(pretrained_hparams["in_feats"])
+elif hasattr(datamodule, "in_feats"):
+    in_feats = int(datamodule.in_feats)
+elif hasattr(datamodule, "features") and hasattr(datamodule.features, "in_feats"):
+    in_feats = int(datamodule.features.in_feats)
+else:
+    b0 = next(iter(datamodule.train_dataloader()))
+    in_feats = int(b0[0].shape[-1])
+
+# FIXED: Use pretrained params, not defaults
+n_hidden = pretrained_n_hidden
+n_layers = pretrained_n_layers
+
+print("Building model with:")
+print(f"  in_feats:       {in_feats}")
+print(f"  n_hidden:       {n_hidden}")
+print(f"  n_layers:       {n_layers}")
+print(f"  num_tasks:      {len(tasks)}")
+print(f"  lr:             {LR} (50x smaller than before!)")
+print(f"  weight_decay:   {WEIGHT_DECAY}")
+print()
+
+model = st.models.chord.ChordPrediction(
+    in_feats=in_feats,
+    n_hidden=n_hidden,
+    tasks=tasks,  # CRITICAL: Use pretrained tasks!
+    n_layers=n_layers,
+    lr=LR,
+    weight_decay=WEIGHT_DECAY,
+)
+
+
+# -------------------------
+# Step 7: Load pretrained weights
+# -------------------------
+print("=" * 70)
+print("STEP 7: Loading pretrained weights")
+print("=" * 70 + "\n")
+
+# Detect encoder prefix in current model
+model_keys = list(model.state_dict().keys())
+
+def find_encoder_prefix(keys):
+    needles = [
+        "encoder.spelling_embedding.weight",
+        "encoder.pitch_embedding.weight",
+        "encoder.embedding.weight",
+        "encoder.encoder.layers.0",
+    ]
+    for needle in needles:
+        for k in keys:
+            if needle in k:
+                i = k.find("encoder.")
+                return k[:i]
+    return None
+
+target_prefix = find_encoder_prefix(model_keys)
+if target_prefix is None:
+    print("\n[DEBUG] Could not auto-detect encoder prefix. First 100 model keys:\n")
+    for k in model_keys[:100]:
+        print(k)
+    raise RuntimeError("Could not find encoder.* keys in current model.state_dict().")
+
+# Try to load ALL weights (not just encoder)
+# Since tasks match now, heads should load too!
+print("Attempting to load all pretrained weights (encoder + heads)...")
+
+# Strip any 'module.' prefix from checkpoint keys
+cleaned_state_dict = {}
+for k, v in state_dict.items():
+    # Skip loss parameters
+    if k.startswith("train_loss.") or k.startswith("val_loss.") or k.startswith("test_loss."):
+        continue
+    # Remove 'module.' prefix if present
+    if k.startswith("module."):
+        cleaned_state_dict[k[7:]] = v
+    else:
+        cleaned_state_dict[k] = v
+
+missing, unexpected = model.load_state_dict(cleaned_state_dict, strict=False)
+
+print(f"\n✓ Pretrained weights loaded")
+print(f"  Loaded tensors:     {len(cleaned_state_dict)}")
+print(f"  Missing keys:       {len(missing)}")
+print(f"  Unexpected keys:    {len(unexpected)}")
+
+# Check if important heads loaded
+important_heads = ["romanNumeral", "localkey", "tonkey", "pcset", "bass"]
+loaded_heads = []
+missing_heads = []
+
+for head in important_heads:
+    head_key_pattern = f".{head}."  # e.g., ".romanNumeral."
+    head_keys = [k for k in cleaned_state_dict.keys() if head_key_pattern in k]
+    if head_keys:
+        loaded_heads.append(head)
+    else:
+        missing_heads.append(head)
+
+if loaded_heads:
+    print(f"\n✓ Task heads loaded successfully: {', '.join(loaded_heads)}")
+if missing_heads:
+    print(f"⚠ Task heads NOT loaded (will be random): {', '.join(missing_heads)}")
+
+print()
+
+
+# -------------------------
+# Step 8: Log config to W&B
+# -------------------------
+wandb_logger.experiment.config.update({
+    "dataset": "Mozart",
+    "finetune": True,
+    "pretrained_ckpt": PRETRAINED_CKPT,
+    "pretrained_vocab_size": rn_vocab_size,
+    "data_version": DATA_VERSION,
+    "max_epochs": MAX_EPOCHS,
+    "batch_size": BATCH_SIZE,
+    "num_workers": NUM_WORKERS,
+    "num_tasks": len(tasks),
+    "in_feats": in_feats,
+    "n_hidden": n_hidden,
+    "n_layers": n_layers,
+    "lr": LR,
+    "weight_decay": WEIGHT_DECAY,
+    "precision": 32,
+    "grad_clip": 1.0,
+    "earlystop_patience": 10,
+    "earlystop_min_delta": 1e-4,
+    "nan_sanitize": "all_floats_train_val_test",
+})
+
+
+# -------------------------
+# Step 9: NaN/Inf sanitize callback
+# -------------------------
+class SanitizeBatchNaNs(Callback):
+    """
+    Replace any NaN/Inf in floating tensors inside the batch with 0.0.
+    Runs for TRAIN/VAL/TEST so train_loss/val_loss won't become NaN.
+    """
+    def __init__(self, verbose_first_k=5):
+        super().__init__()
+        self.verbose_first_k = verbose_first_k
+        self._printed = 0
+
+    def _scan_and_fix(self, obj, path="batch"):
+        if torch.is_tensor(obj):
+            if obj.dtype.is_floating_point:
+                bad = torch.isnan(obj) | torch.isinf(obj)
+                if bad.any():
+                    if self._printed < self.verbose_first_k:
+                        n = bad.sum().item()
+                        print(f"[SanitizeBatchNaNs] Fixed {n} NaN/Inf in {path} (shape={tuple(obj.shape)})")
+                        self._printed += 1
+                    obj[bad] = 0.0
+            return
+
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                self._scan_and_fix(v, f"{path}.{k}")
+        elif isinstance(obj, (list, tuple)):
+            for i, v in enumerate(obj):
+                self._scan_and_fix(v, f"{path}[{i}]")
+
+    def on_train_batch_start(self, trainer, pl_module, batch, batch_idx):
+        self._scan_and_fix(batch)
+
+    def on_validation_batch_start(self, trainer, pl_module, batch, batch_idx, dataloader_idx=0):
+        self._scan_and_fix(batch)
+
+    def on_test_batch_start(self, trainer, pl_module, batch, batch_idx, dataloader_idx=0):
+        self._scan_and_fix(batch)
+
+
+# -------------------------
+# Step 10: Train with EarlyStopping + checkpointing
+# -------------------------
+checkpoint = ModelCheckpoint(
+    save_top_k=1,
+    monitor="val_loss",
+    mode="min",
+    filename="mozart-finetune-FIXED-{epoch:02d}-{val_loss:.3f}",
+)
+
+# FIXED: Increased patience from 5 to 10 for small dataset
+early_stop = EarlyStopping(
+    monitor="val_loss",
+    mode="min",
+    patience=10,    # Increased from 5
+    min_delta=1e-4,
+    verbose=True,
+)
+
+trainer = Trainer(
+    max_epochs=MAX_EPOCHS,
+    accelerator="auto",
+    devices=[0] if torch.cuda.is_available() else None,
+    callbacks=[checkpoint, early_stop, SanitizeBatchNaNs(verbose_first_k=5)],
+    reload_dataloaders_every_n_epochs=5,
+    gradient_clip_val=1.0,
+    precision=32,
+    logger=wandb_logger,
+)
+
+print("=" * 70)
+print("STEP 11: Starting finetuning on Mozart data")
+print("=" * 70 + "\n")
+
+trainer.fit(model, datamodule)
+
+print("\nBEST CKPT:", checkpoint.best_model_path)
+print("BEST SCORE:", checkpoint.best_model_score)
+
+# Log the best ckpt as a W&B artifact
+if checkpoint.best_model_path and os.path.exists(checkpoint.best_model_path):
+    artifact = wandb.Artifact(
+        name="mozart-finetuned-model-FIXED",
+        type="model",
+        description="ChordGNN finetuned on Mozart (FIXED: vocab matched, lower LR)"
+    )
+    artifact.add_file(checkpoint.best_model_path)
+    wandb_logger.experiment.log_artifact(artifact)
+    print("✓ Logged W&B artifact: mozart-finetuned-model-FIXED\n")
+else:
+    print("WARNING: No best_model_path found; skipping artifact logging.\n")
+
+
+# -------------------------
+# Step 12: Test best checkpoint
+# -------------------------
+print("\n" + "=" * 70)
+print("STEP 12: Testing best checkpoint")
+print("=" * 70 + "\n")
+
+trainer.test(model, datamodule, ckpt_path=checkpoint.best_model_path)
+
+print("\n" + "=" * 70)
+print("✓ COMPLETE!")
+print(f"Finetuned model: {checkpoint.best_model_path}")
+print("=" * 70 + "\n")
+
+wandb.finish()
