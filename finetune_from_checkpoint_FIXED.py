@@ -233,14 +233,36 @@ else:
 from pytorch_lightning import LightningDataModule
 
 class MozartDatamodule(LightningDataModule):
-    def __init__(self, dataset, batch_size, num_workers):
+    def __init__(self, dataset, batch_size, num_workers, version):
         super().__init__()  # CRITICAL: Call parent __init__
         self.dataset = dataset
         self.batch_size = batch_size
         self.num_workers = num_workers
+        self.version = version
         self.tasks = dataset.tasks
         self.features = dataset.features
         self.in_feats = dataset.features.in_feats if hasattr(dataset.features, 'in_feats') else None
+
+    def collate_fn(self, batch):
+        """Collate function for val/test dataloaders (batch_size=1)"""
+        from chordgnn.utils.hgraph import add_reverse_edges_from_edge_index
+
+        batch_inputs, edges, edge_type, batch_label, onset_div, name = batch[0]
+        batch_inputs = batch_inputs.squeeze(0).float()
+        batch_labels = batch_label.squeeze(0)
+        onset_div = onset_div.squeeze().to(batch_inputs.device)
+
+        if self.version == "v1.0.0":
+            from chordgnn.utils.chord_representations import available_representations
+        else:
+            from chordgnn.utils.chord_representations_latest import available_representations
+
+        batch_label = {task: batch_labels[:, i].squeeze().long() for i, task in enumerate(available_representations.keys())}
+        batch_label["onset"] = batch_labels[:, -1].squeeze()
+        edges = edges.squeeze(0)
+        edge_type = edge_type.squeeze(0)
+        edges, edge_type = add_reverse_edges_from_edge_index(edges, edge_type)
+        return batch_inputs, edges, edge_type, batch_label, onset_div, name
 
     def setup(self, stage=None):
         # Split dataset into train/val/test based on filenames
@@ -292,30 +314,30 @@ class MozartDatamodule(LightningDataModule):
             batch_size=self.batch_size,
             shuffle=True,
             num_workers=self.num_workers,
-            collate_fn=self.dataset.collate_fn if hasattr(self.dataset, 'collate_fn') else None
+            collate_fn=self.collate_fn
         )
 
     def val_dataloader(self):
         from torch.utils.data import DataLoader
         return DataLoader(
             self.dataset_val,
-            batch_size=self.batch_size,
+            batch_size=1,  # Use batch_size=1 for validation
             shuffle=False,
             num_workers=self.num_workers,
-            collate_fn=self.dataset.collate_fn if hasattr(self.dataset, 'collate_fn') else None
+            collate_fn=self.collate_fn
         )
 
     def test_dataloader(self):
         from torch.utils.data import DataLoader
         return DataLoader(
             self.dataset_test,
-            batch_size=self.batch_size,
+            batch_size=1,  # Use batch_size=1 for test
             shuffle=False,
             num_workers=self.num_workers,
-            collate_fn=self.dataset.collate_fn if hasattr(self.dataset, 'collate_fn') else None
+            collate_fn=self.collate_fn
         )
 
-datamodule = MozartDatamodule(dataset, BATCH_SIZE, NUM_WORKERS)
+datamodule = MozartDatamodule(dataset, BATCH_SIZE, NUM_WORKERS, DATA_VERSION)
 datamodule.setup()
 
 print(f"✓ Training: {len(datamodule.dataset_train)} samples (with augmentation)")
