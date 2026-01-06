@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.venv
+venv/
+
+# Data / caches
+*.tsv
+*.csv
+*.zip
+*.pt
+*.ckpt
+*.pth
+
+# ChordGNN / scratch
+.chordgnn/
+chordgnn_cache/
+chordgnn_data/
+scratch/
+wandb/
+
+# Logs
+logs/
+*.log
+
+# OS
+.DS_Store
+core.*
