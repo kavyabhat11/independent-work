@@ -185,22 +185,13 @@ os.makedirs(os.path.join(dataset_dir, "validation"), exist_ok=True)
 os.makedirs(os.path.join(dataset_dir, "test"), exist_ok=True)
 
 print(f"Copying Mozart TSVs to: {dataset_dir}")
-
-# All TSVs are in flat directory, split them: 70% train, 15% val, 15% test
-all_tsvs = sorted(glob.glob(f"{MOZART_ROOT}/*.tsv"))
-n_files = len(all_tsvs)
-n_train = int(n_files * 0.7)
-n_val = int(n_files * 0.15)
-
-train_tsvs = all_tsvs[:n_train]
-val_tsvs = all_tsvs[n_train:n_train+n_val]
-test_tsvs = all_tsvs[n_train+n_val:]
-
-for tsv in train_tsvs:
+# Expect MOZART_ROOT to have training/validation/test subdirectories
+# Use split_mozart_data.py to create this structure first
+for tsv in glob.glob(f"{MOZART_ROOT}/training/*.tsv"):
     shutil.copy(tsv, os.path.join(dataset_dir, "training"))
-for tsv in val_tsvs:
+for tsv in glob.glob(f"{MOZART_ROOT}/validation/*.tsv"):
     shutil.copy(tsv, os.path.join(dataset_dir, "validation"))
-for tsv in test_tsvs:
+for tsv in glob.glob(f"{MOZART_ROOT}/test/*.tsv"):
     shutil.copy(tsv, os.path.join(dataset_dir, "test"))
 
 train_ct = len(glob.glob(f"{dataset_dir}/training/*.tsv"))
