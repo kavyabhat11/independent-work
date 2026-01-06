@@ -148,11 +148,19 @@ else:
 pretrained_n_hidden = int(pretrained_hparams.get("n_hidden", 256))
 pretrained_n_layers = int(pretrained_hparams.get("n_layers", 1))  # default 1, not 2!
 pretrained_in_feats = int(pretrained_hparams.get("in_feats", 83))
+pretrained_dropout = float(pretrained_hparams.get("dropout", 0.5))
+pretrained_use_nade = bool(pretrained_hparams.get("use_nade", False))
+pretrained_use_jk = bool(pretrained_hparams.get("use_jk", False))
+pretrained_use_rotograd = bool(pretrained_hparams.get("use_rotograd", False))
 
 print(f"\nPretrained architecture:")
-print(f"  in_feats:  {pretrained_in_feats}")
-print(f"  n_hidden:  {pretrained_n_hidden}")
-print(f"  n_layers:  {pretrained_n_layers}")
+print(f"  in_feats:     {pretrained_in_feats}")
+print(f"  n_hidden:     {pretrained_n_hidden}")
+print(f"  n_layers:     {pretrained_n_layers}")
+print(f"  dropout:      {pretrained_dropout}")
+print(f"  use_nade:     {pretrained_use_nade}")
+print(f"  use_jk:       {pretrained_use_jk}")
+print(f"  use_rotograd: {pretrained_use_rotograd}")
 print()
 
 
@@ -164,8 +172,13 @@ print("STEP 3: Setting up Mozart dataset cache")
 print("=" * 70 + "\n")
 
 # CRITICAL FIX: Use CACHE_ROOT as raw_dir so dataset doesn't download full dataset
-# Copy Mozart TSVs to the location where AugmentedNetChordDataset expects them
-dataset_dir = os.path.join(CACHE_ROOT, "AugmentedNetChordDataset", "dataset")
+# Copy Mozart TSVs to the location that matches DATA_VERSION
+# For v1.0.0 → AugmentedNetChordDataset
+# For v2.0.0 → AugmentedNetLatestChordDataset
+if DATA_VERSION == "v1.0.0":
+    dataset_dir = os.path.join(CACHE_ROOT, "AugmentedNetChordDataset", "dataset")
+else:
+    dataset_dir = os.path.join(CACHE_ROOT, "AugmentedNetLatestChordDataset", "dataset")
 
 if os.path.exists(dataset_dir):
     print(f"Cleaning existing dataset cache: {dataset_dir}")
@@ -219,8 +232,11 @@ else:
     )
 
 # Create a minimal datamodule wrapper
-class MozartDatamodule:
+from pytorch_lightning import LightningDataModule
+
+class MozartDatamodule(LightningDataModule):
     def __init__(self, dataset, batch_size, num_workers):
+        super().__init__()  # CRITICAL: Call parent __init__
         self.dataset = dataset
         self.batch_size = batch_size
         self.num_workers = num_workers
@@ -230,7 +246,6 @@ class MozartDatamodule:
 
     def setup(self, stage=None):
         # Split dataset into train/val/test based on filenames
-        import re
         all_graphs = [(i, g) for i, g in enumerate(self.dataset.graphs)]
 
         # Determine split based on graph names
@@ -238,17 +253,35 @@ class MozartDatamodule:
         val_idx = []
         test_idx = []
 
+        print(f"\nSplitting {len(all_graphs)} graphs into train/val/test...")
+
         for i, g in all_graphs:
-            name = g.name
+            name = g.name.lower()  # Case-insensitive matching
+
+            # Debug: print first few names to see the pattern
+            if i < 3:
+                print(f"  Sample graph name: {g.name}")
+
             # Files in training/, validation/, test/ subdirs
-            if '/training/' in name or '\\training\\' in name:
+            if 'training' in name:
                 train_idx.append(i)
-            elif '/validation/' in name or '\\validation\\' in name:
+            elif 'validation' in name:
                 val_idx.append(i)
-            elif '/test/' in name or '\\test\\' in name:
+            elif 'test' in name:
                 test_idx.append(i)
 
-        from torch.utils.data import Subset, DataLoader
+        print(f"  → Found {len(train_idx)} training, {len(val_idx)} validation, {len(test_idx)} test samples")
+
+        # Fallback: if split failed, use all data for training
+        if len(train_idx) == 0 and len(val_idx) == 0 and len(test_idx) == 0:
+            print("  ⚠ WARNING: No samples matched train/val/test split!")
+            print("  → Using 80/10/10 split as fallback")
+            n = len(all_graphs)
+            train_idx = list(range(0, int(0.8 * n)))
+            val_idx = list(range(int(0.8 * n), int(0.9 * n)))
+            test_idx = list(range(int(0.9 * n), n))
+
+        from torch.utils.data import Subset
 
         self.dataset_train = Subset(self.dataset, train_idx)
         self.dataset_val = Subset(self.dataset, val_idx)
@@ -297,7 +330,10 @@ print(f"\nDatamodule task vocab sizes:")
 for task, size in datamodule_tasks.items():
     pretrained_size = pretrained_tasks.get(task, "MISSING")
     match = "✓" if size == pretrained_size else "✗ MISMATCH!"
-    print(f"  {task:15s}: {size:3} (pretrained: {pretrained_size:3}) {match}")
+    if pretrained_size == "MISSING":
+        print(f"  {task:15s}: {size:3} (pretrained: {pretrained_size}) {match}")
+    else:
+        print(f"  {task:15s}: {size:3} (pretrained: {pretrained_size:3}) {match}")
 
 # Check for critical mismatches
 mismatches = []
@@ -350,14 +386,22 @@ else:
 # FIXED: Use pretrained params, not defaults
 n_hidden = pretrained_n_hidden
 n_layers = pretrained_n_layers
+dropout = pretrained_dropout
+use_nade = pretrained_use_nade
+use_jk = pretrained_use_jk
+use_rotograd = pretrained_use_rotograd
 
 print("Building model with:")
 print(f"  in_feats:       {in_feats}")
 print(f"  n_hidden:       {n_hidden}")
 print(f"  n_layers:       {n_layers}")
+print(f"  dropout:        {dropout}")
 print(f"  num_tasks:      {len(tasks)}")
 print(f"  lr:             {LR} (50x smaller than before!)")
 print(f"  weight_decay:   {WEIGHT_DECAY}")
+print(f"  use_nade:       {use_nade}")
+print(f"  use_jk:         {use_jk}")
+print(f"  use_rotograd:   {use_rotograd}")
 
 # CRITICAL FIX: Detect if checkpoint uses PostChordPrediction or ChordPrediction
 checkpoint_keys = list(state_dict.keys())
@@ -378,9 +422,14 @@ if has_frozen_model:
         n_hidden=n_hidden,
         tasks=tasks,  # CRITICAL: Use pretrained tasks!
         n_layers=n_layers,
+        dropout=dropout,
         lr=LR,
         weight_decay=WEIGHT_DECAY,
+        use_nade=use_nade,
+        use_jk=use_jk,
+        use_rotograd=use_rotograd,
         frozen_model=frozen_model,
+        device="cpu",  # Will be moved to GPU by Trainer if available
     )
 else:
     print(f"  ✓ Detected ChordPrediction (encoder.* or module.* keys)")
@@ -391,8 +440,13 @@ else:
         n_hidden=n_hidden,
         tasks=tasks,  # CRITICAL: Use pretrained tasks!
         n_layers=n_layers,
+        dropout=dropout,
         lr=LR,
         weight_decay=WEIGHT_DECAY,
+        use_nade=use_nade,
+        use_jk=use_jk,
+        use_rotograd=use_rotograd,
+        device="cpu",  # Will be moved to GPU by Trainer if available
     )
 
 print()
