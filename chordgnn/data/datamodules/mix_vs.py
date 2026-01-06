@@ -59,12 +59,12 @@ class AugmentedGraphDatamodule(LightningDataModule):
                    self.datasets_map[i][1]].collection == "test"
         ]
 
-        # val_idx = [
-        #     i
-        #     for i in idxs
-        #     if self.datasets[self.datasets_map[i][0]].graphs[
-        #            self.datasets_map[i][1]].collection == "validation"
-        # ]
+        val_idx = [
+            i
+            for i in idxs
+            if self.datasets[self.datasets_map[i][0]].graphs[
+                   self.datasets_map[i][1]].collection == "validation"
+        ]
 
         train_idx = [
             i
@@ -80,15 +80,15 @@ class AugmentedGraphDatamodule(LightningDataModule):
         # structure the indices as dicts {dataset_i : [piece_i,...,piece_i]}
         test_idx_dict = idx_tuple_to_dict(test_idx, self.datasets_map)
         train_idx_dict = idx_tuple_to_dict(train_idx, self.datasets_map)
-        # val_idx_dict = idx_tuple_to_dict(val_idx, self.datasets_map)
+        val_idx_dict = idx_tuple_to_dict(val_idx, self.datasets_map)
 
         # create the datasets
         self.dataset_train = ConcatDataset([self.datasets[k][train_idx_dict[k]] for k in train_idx_dict.keys()])
-        # self.dataset_val = ConcatDataset([self.datasets[k][val_idx_dict[k]] for k in val_idx_dict.keys()])
+        self.dataset_val = ConcatDataset([self.datasets[k][val_idx_dict[k]] for k in val_idx_dict.keys()])
         self.dataset_test = ConcatDataset([self.datasets[k][test_idx_dict[k]] for k in test_idx_dict.keys()])
         print("Running on all collections")
         print(
-            f"Train size :{len(self.dataset_train)}, Val size :{len(self.dataset_test)}, Test size :{len(self.dataset_test)}"
+            f"Train size :{len(self.dataset_train)}, Val size :{len(self.dataset_val)}, Test size :{len(self.dataset_test)}"
         )
 
     def collate_fn(self, batch):
@@ -168,7 +168,7 @@ class AugmentedGraphDatamodule(LightningDataModule):
         # batch_size = len(self.dataset_test)//10
         # sampler = BySequenceLengthSampler(self.dataset_train, self.bucket_boundaries, batch_size)
         return torch.utils.data.DataLoader(
-            self.dataset_test, batch_size=1, num_workers=self.num_workers, collate_fn=self.collate_fn,
+            self.dataset_val, batch_size=1, num_workers=self.num_workers, collate_fn=self.collate_fn,
             drop_last=False, pin_memory=False,
         )
 

@@ -23,18 +23,22 @@ if os.path.exists(cache):
     shutil.rmtree(cache)
 
 os.makedirs(os.path.join(cache, "training"), exist_ok=True)
+os.makedirs(os.path.join(cache, "validation"), exist_ok=True)
 os.makedirs(os.path.join(cache, "test"), exist_ok=True)
 
 # Copy Mozart TSVs
 mozart = "/Users/kavyabhat/mozart_dataset"
-for tsv in glob.glob(f"{mozart}/training/*.tsv") + glob.glob(f"{mozart}/validation/*.tsv"):
+for tsv in glob.glob(f"{mozart}/training/*.tsv"):
     shutil.copy(tsv, os.path.join(cache, "training"))
+for tsv in glob.glob(f"{mozart}/validation/*.tsv"):
+    shutil.copy(tsv, os.path.join(cache, "validation"))
 for tsv in glob.glob(f"{mozart}/test/*.tsv"):
     shutil.copy(tsv, os.path.join(cache, "test"))
 
 train_ct = len(glob.glob(f"{cache}/training/*.tsv"))
+val_ct = len(glob.glob(f"{cache}/validation/*.tsv"))
 test_ct = len(glob.glob(f"{cache}/test/*.tsv"))
-print(f"✓ Data ready: {train_ct} train, {test_ct} test\n")
+print(f"✓ Data ready: {train_ct} train, {val_ct} val, {test_ct} test\n")
 
 # Step 2: Load and finetune
 import chordgnn as st
