@@ -216,15 +216,171 @@ def analysis_lookup(analysis_events, meas: int, beat_in_meas: float):
     return chosen if chosen is not None else analysis_events[0]
 
 
+def simplify_roman_numeral_to_31class(roman_str: str):
+    """
+    Simplify complex Roman numeral labels to fit the 31-class vocabulary.
+
+    Examples:
+      "It6/vii" -> ("It", "vii")  # Italian 6th, tonicized to vii
+      "V7/V" -> ("V7", "V")        # V7 of V
+      "V6/4/IV" -> ("V", "IV")     # V in 6/4 inversion, tonicized to IV
+      "ii/o2/i" -> ("iio", "i")    # diminished ii, tonicized to i
+      "V7" -> ("V7", None)         # No tonicization
+
+    Returns: (base_rn, tonkey)
+    """
+    if not roman_str:
+        return ("I", None)
+
+    # Split by '/' to separate secondary function
+    parts = roman_str.split('/')
+
+    # The base chord is the first part (may contain inversion numbers)
+    base = parts[0]
+
+    # Check for quality markers in slash notation: ii/o2/i means "iio in 2nd inv, tonicized to i"
+    quality_marker = ""
+    if len(parts) > 1:
+        # Check if second part is a quality marker like "o", "o2", "o6/5", "o7"
+        if parts[1].startswith('o'):
+            quality_marker = "o"
+            # Check if it's a seventh chord: "o7" -> "o7"
+            if '7' in parts[1]:
+                quality_marker = "o7"
+
+    # Check if there's a secondary function (tonicization)
+    tonkey = None
+    if len(parts) > 1:
+        # The last part is usually the tonicized key
+        # e.g., "V7/V" -> tonkey = "V"
+        # e.g., "V6/4/IV" -> parts = ["V6", "4", "IV"], tonkey = "IV"
+        # e.g., "ii/o2/i" -> parts = ["ii", "o2", "i"], tonkey = "i"
+        # Find the last part that looks like a Roman numeral
+        for i in range(len(parts) - 1, 0, -1):
+            part = parts[i]
+            # Skip quality markers
+            if part.startswith('o'):
+                continue
+            # Check if it looks like a key (starts with Roman numeral pattern)
+            if part and (part[0].lower() in 'ivxn' or part == 'bII' or part.startswith('#')):
+                tonkey = part
+                break
+
+    # Remove inversion numbers from base chord
+    # Common patterns: "6", "6/4", "6/5", "4/3", "2", "7", etc.
+    # But preserve quality markers like "o" and figured bass in chord name
+
+    # Remove standalone inversion markers that come after the base RN
+    # "It6" -> "It", "V6" -> "V", but keep "viio7" as is
+    import re
+
+    # Strip trailing inversion numbers like 6, 6/4, 6/5, 4/3, 2
+    # But be careful not to remove "7" from chord names like "V7", "viio7"
+
+    # Handle special cases first
+    base_clean = base
+
+    # Remove explicit inversion markers: "6", "6/4", "6/5", "4/3", "2"
+    # These appear in labels like "It6", "V6/4", "V6/5"
+    # But NOT in "V7", "viio7", "Fr7", "Ger7"
+
+    # Strategy: Remove trailing "6", "6/4", "6/5", "4/3", "2" patterns
+    # Keep "7" only if it's part of a known chord type
+
+    # Remove inversion suffixes
+    base_clean = re.sub(r'6/5$', '', base_clean)  # sixth-five
+    base_clean = re.sub(r'6/4$', '', base_clean)  # six-four
+    base_clean = re.sub(r'4/3$', '', base_clean)  # four-three
+    base_clean = re.sub(r'6$', '', base_clean)    # sixth
+    base_clean = re.sub(r'(?<!7)2$', '', base_clean)  # second (but not "Fr7" -> "Fr")
+
+    # Apply quality marker if found (from slash notation like ii/o2/i)
+    if quality_marker:
+        base_clean = base_clean + quality_marker
+
+    # Map to 31-class vocabulary
+    # The 31-class vocab is:
+    # Cad, Fr7, Ger7, I, I7, III+, III+7, IV, IV7, It, N, V, V+, V7, VI, VI7,
+    # i, i7, ii, ii7, iii, iii7, iio, iiø7, iv, iv7, vi, vi7, viio, viio7, viiø7
+
+    # Handle special notations:
+    # "o" suffix means diminished -> "iio", "viio"
+    # "ø" suffix means half-diminished -> "iiø7", "viiø7"
+    # "+" suffix means augmented -> "III+", "V+"
+
+    # If base_clean is already in vocab, use it
+    # Otherwise, try to map it
+
+    vocab_31 = {
+        'Cad', 'Fr7', 'Ger7', 'I', 'I7', 'III+', 'III+7', 'IV', 'IV7', 'It', 'N',
+        'V', 'V+', 'V7', 'VI', 'VI7', 'i', 'i7', 'ii', 'ii7', 'iii', 'iii7',
+        'iio', 'iiø7', 'iv', 'iv7', 'vi', 'vi7', 'viio', 'viio7', 'viiø7'
+    }
+
+    if base_clean in vocab_31:
+        return (base_clean, tonkey)
+
+    # Try common fallback mappings for chords not in vocab
+    fallback_map = {
+        'iio7': 'iiø7',      # Diminished ii seventh -> half-diminished (more common)
+        'Io': 'I',           # Diminished I doesn't really exist
+        'IVo': 'IV',         # Diminished IV doesn't really exist
+        'Vo': 'V',           # Diminished V is rare
+        'I6': 'I',           # Already stripped but just in case
+        'IV6': 'IV',
+        'V6': 'V',
+        'vi6': 'vi',
+        'ii6': 'ii',
+        'iii6': 'iii',
+    }
+
+    if base_clean in fallback_map:
+        return (fallback_map[base_clean], tonkey)
+
+    # If still not found, try to extract just the Roman numeral part
+    # and see if that's in the vocab
+    import re
+    # Extract Roman numeral (i, ii, iii, iv, v, vi, vii, I, II, III, IV, V, VI, VII)
+    match = re.match(r'^([ivxIVX]+)', base_clean)
+    if match:
+        rn_base = match.group(1)
+        # Normalize to standard forms
+        rn_lower = rn_base.lower()
+        if rn_lower in ['i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii']:
+            # Check if the original had uppercase (major) or lowercase (minor)
+            if rn_base[0].isupper():
+                # Major chord
+                normalized = rn_base.upper()
+                if normalized in vocab_31:
+                    return (normalized, tonkey)
+            else:
+                # Minor chord
+                if rn_lower in vocab_31:
+                    return (rn_lower, tonkey)
+
+    # Default fallback: use as-is or fallback to "I"
+    if base_clean:
+        return (base_clean, tonkey)
+    return ("I", tonkey)
+
+
 def realize_roman_numeral(roman_str: str, local_key_tok: str):
     """
     Compute chord attributes from roman numeral and key using music21.
     Returns a dict matching needed a_* fields.
     Falls back safely if music21 can't parse.
+
+    CRITICAL: Simplifies complex RN labels to 31-class vocabulary.
     """
+    # Simplify to 31-class vocab
+    base_rn, tonkey = simplify_roman_numeral_to_31class(roman_str)
+
+    # Determine tonicized key for a_tonicizedKey field
+    tonicized_key_tok = tonkey if tonkey else local_key_tok
+
     # Defaults (safe + parser-compatible)
     out = {
-        "a_romanNumeral": roman_str if roman_str else "I",
+        "a_romanNumeral": base_rn,  # Use simplified base RN
         "a_pitchNames": "('C', 'E', 'G')",
         "a_bass": "C",
         "a_root": "C",
@@ -232,7 +388,7 @@ def realize_roman_numeral(roman_str: str, local_key_tok: str):
         "a_quality": "unknown",
         "a_pcset": "(0, 4, 7)",
         "a_localKey": (local_key_tok if local_key_tok else "C"),
-        "a_tonicizedKey": (local_key_tok if local_key_tok else "C"),
+        "a_tonicizedKey": tonicized_key_tok,
         "a_degree1": 1,
         "a_degree2": None,
     }
@@ -240,9 +396,12 @@ def realize_roman_numeral(roman_str: str, local_key_tok: str):
     if m21roman is None or m21key is None:
         return out
 
-    kobj = key_token_to_music21_key(local_key_tok)
+    # Use the tonicized key for music21 RomanNumeral parsing
+    # If we have "V7/V" -> base_rn="V7", tonkey="V"
+    # We want to parse "V7" in the context of the tonicized key
+    kobj = key_token_to_music21_key(tonicized_key_tok)
     try:
-        rn = m21roman.RomanNumeral(roman_str, kobj)
+        rn = m21roman.RomanNumeral(base_rn, kobj)
 
         # Pitch names as tuple literal string, e.g. ('E-', 'G', 'B-', 'D-')
         pitch_names = tuple(p.name for p in rn.pitches)  # no octaves in your real row

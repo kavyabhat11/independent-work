@@ -50,7 +50,7 @@ torch.manual_seed(0)
 # -------------------------
 WANDB_ARTIFACT = "melkisedeath/chord_rec/model-kvd0jic5:v0"
 ARTIFACT_ROOT = "./artifacts"
-MOZART_ROOT = "./mozart_dataset"
+MOZART_ROOT = "./mozart_tsv_31class"  # Updated to use 31-class vocabulary TSVs
 
 CACHE_ROOT = "/scratch/network/kb9520/chordgnn_data"
 CACHE = os.path.join(CACHE_ROOT, "AugmentedNetChordDataset", "dataset")
@@ -124,25 +124,21 @@ for task, size in pretrained_tasks.items():
     marker = " ← CRITICAL!" if task == "romanNumeral" else ""
     print(f"  {task:15s}: {size}{marker}")
 
-# CRITICAL FIX: Determine DATA_VERSION based on romanNumeral vocab
 if "romanNumeral" not in pretrained_tasks:
     raise RuntimeError("Pretrained checkpoint missing 'romanNumeral' task!")
 
 rn_vocab_size = pretrained_tasks["romanNumeral"]
+print(f"\n✓ Pretrained uses romanNumeral: {rn_vocab_size} classes")
 
+# Auto-select DATA_VERSION to match pretrained vocab
 if rn_vocab_size == 31:
-    DATA_VERSION = "v2.0.0"  # Loads Augmented2022ChordGraphDataset
-    print(f"\n✓ Pretrained uses romanNumeral: 31 classes")
+    DATA_VERSION = "v2.0.0"  # or any string != "v1.0.0"
     print(f"  → Setting DATA_VERSION = '{DATA_VERSION}' (Augmented2022ChordGraphDataset)")
 elif rn_vocab_size == 76:
-    DATA_VERSION = "v1.0.0"  # Loads AugmentedNetChordGraphDataset
-    print(f"\n✓ Pretrained uses romanNumeral: 76 classes")
+    DATA_VERSION = "v1.0.0"
     print(f"  → Setting DATA_VERSION = '{DATA_VERSION}' (AugmentedNetChordGraphDataset)")
 else:
-    raise RuntimeError(
-        f"Unknown romanNumeral vocab size: {rn_vocab_size}\n"
-        f"Expected 31 (Augmented2022) or 76 (AugmentedNet)"
-    )
+    raise RuntimeError(f"Unexpected romanNumeral vocab size: {rn_vocab_size}")
 
 # Extract other pretrained architecture params
 pretrained_n_hidden = int(pretrained_hparams.get("n_hidden", 256))
@@ -189,11 +185,22 @@ os.makedirs(os.path.join(dataset_dir, "validation"), exist_ok=True)
 os.makedirs(os.path.join(dataset_dir, "test"), exist_ok=True)
 
 print(f"Copying Mozart TSVs to: {dataset_dir}")
-for tsv in glob.glob(f"{MOZART_ROOT}/training/*.tsv"):
+
+# All TSVs are in flat directory, split them: 70% train, 15% val, 15% test
+all_tsvs = sorted(glob.glob(f"{MOZART_ROOT}/*.tsv"))
+n_files = len(all_tsvs)
+n_train = int(n_files * 0.7)
+n_val = int(n_files * 0.15)
+
+train_tsvs = all_tsvs[:n_train]
+val_tsvs = all_tsvs[n_train:n_train+n_val]
+test_tsvs = all_tsvs[n_train+n_val:]
+
+for tsv in train_tsvs:
     shutil.copy(tsv, os.path.join(dataset_dir, "training"))
-for tsv in glob.glob(f"{MOZART_ROOT}/validation/*.tsv"):
+for tsv in val_tsvs:
     shutil.copy(tsv, os.path.join(dataset_dir, "validation"))
-for tsv in glob.glob(f"{MOZART_ROOT}/test/*.tsv"):
+for tsv in test_tsvs:
     shutil.copy(tsv, os.path.join(dataset_dir, "test"))
 
 train_ct = len(glob.glob(f"{dataset_dir}/training/*.tsv"))
