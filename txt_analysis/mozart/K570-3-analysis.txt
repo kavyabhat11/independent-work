@@ -1,0 +1,88 @@
+Composer: [TODO]
+Piece: [TODO]
+Analyst: [TODO]
+Proofreader: [TODO]
+Note: [TODO]
+
+Tempo: [TODO]
+Time Signature: 2/2
+
+Form: [TODO]
+[TODO: Add pedal markings if applicable]
+
+m1 B-: V/iv
+m2 I
+m3 b2 V
+m4 I b2 V
+m5 I
+m7 b1.25 V b1.5 I b2 V
+m8 I b2 iv/i
+m9 I6/4 b1.5 V7 b2 I
+m10 b1.5 V b2 V7
+m11 V b1.5 It6/vii b1.75 V7
+m12 V b1.25 V7 b1.75 V b2 V7 b2.75 It6/vii
+m13 V b1.5 It6/vii b2 D-: V/VI b2.25 V/VI
+m14 B-: V b1.25 V b2 D-: V/VI b2.125 V/VI
+m15 B-: V b1.125 It6/vii b1.875 V7 b2 V b2.125 It6/vii
+m16 V b1.5 It6/vii b1.75 I b2.25 iv6/4/i b2.5 I b2.75 iv6/4/i
+m17 It6/vii b2 V b2.5 It6/vii
+m18 V b1.25 iv6/4/i b1.75 It6/vii
+m19 I b1.25 iv6/4/i b2 I
+m20 b1.5 iv6/4/i b2.5 I
+m21 iv6/4/i b1.25 It6/vii b1.5 iv6/4/i b2 It6/vii
+m22 I b2 It6/vii
+m23 I6/4 b1.25 It6/vii b2 I
+m25 b2.75 iv6/4/i
+m26 b2 I
+m29 b1.5 V+/IV
+m30 It6/vii b2.5 V
+m31 b1.875 ii/o2/i b2 I b2.75 i/i b2.875 I
+m32 I6/4/V b2 I/V
+m34 i/i b1.25 I/V b1.5 iio/i
+m35 b2 V4/3
+m37 b2.5 V7
+m38 I b2 iv6/4/i
+m39 b2 I
+m42 iv6/4/i b1.5 iio/i b1.75 iv6/4/i b2 iio/i
+m43 iv6/4/i b1.75 V7 b1.875 iv6/4/i b2.5 I
+m44 b2 iv6/4/i
+m45 I6/4 b1.375 It6/vii b2.5 I
+m49 b2 iv6/4/i
+m50 I
+m51 b2 iio/i b2.25 iv6/4/i
+m52 It6/vii b1.5 I6/4 b2 I
+m53 b1.5 iv6/4/i b2 It/#iv b2.25 iv6/4/i
+m54 It6/vii
+m55 iio6/i
+m56 I b1.75 iv6/4/i b2 I
+m57 b1.75 iv6/4/i
+m58 I b2 V7
+m59 b2.75 iv6/4/i
+m60 I
+m62 iv6/4/i b2 I
+m64 b1.75 IV6/5 b2 V b2.25 It6/vii b2.75 V
+m65 It6/vii b2 V
+m66 V7 b1.125 It6/vii b1.75 V7 b2.875 It6/vii
+m67 V b1.25 It6/vii b1.5 V7 b1.75 It6/vii b2 V7 b2.25 It6/vii b2.5 iv6/4/i
+m68 It6/vii b2 V7 b2.25 It6/vii b2.5 V7 b2.75 It6/vii
+m69 iv6/4/i b1.75 It6/vii
+m70 I b1.75 iv6/4/i b2 I
+m71 iv6/4/i
+m72 b2 It6/vii
+m73 I b2 It6/vii b2.75 I6/4
+m74 b1.5 It6/vii b1.75 V7 b1.875 It6/vii b2 I
+m76 V7 b2 I
+m78 V7 b2 I
+m79 b1.25 It6/vii b2 V7
+m80 b1.25 It6/vii b1.75 V7
+m81 I b2 iv6/4/i
+m82 b2 ii6/4
+m83 iv6/4/i b1.5 It6/vii
+m85 I
+m86 b1.5 It6/vii
+m87 b1.125 I6/4 b1.25 V b2 V7
+m89 I
+m92 V7
+m93 I
+
+[TODO Review and add as needed]
