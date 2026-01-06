@@ -10,7 +10,8 @@ from pathlib import Path
 from chordgnn.utils.chord_representations_latest import (
     RomanNumeral31, ChordQuality11, LocalKey38, TonicizedKey38,
     ChordRoot35, Inversion4, PrimaryDegree22, SecondaryDegree22,
-    Bass35, HarmonicRhythm7, PitchClassSet121
+    Bass35, HarmonicRhythm7, PitchClassSet121,
+    Tenor35, Alto35, Soprano35
 )
 
 def check_tsv_vocab(tsv_dir):
@@ -26,7 +27,11 @@ def check_tsv_vocab(tsv_dir):
         (Inversion4, 'a_inversion'),
         (PrimaryDegree22, 'a_degree1'),
         (SecondaryDegree22, 'a_degree2'),
-        # Skip PitchClassSet121 and HarmonicRhythm7 - they have complex encodings
+        (HarmonicRhythm7, 'a_harmonicRhythm'),
+        (Tenor35, 'a_tenor'),
+        (Alto35, 'a_alto'),
+        (Soprano35, 'a_soprano'),
+        # Skip PitchClassSet121 - complex tuple encoding
     ]
 
     tsv_path = Path(tsv_dir)

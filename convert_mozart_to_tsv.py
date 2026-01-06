@@ -54,6 +54,10 @@ REAL_TSV_COLUMNS = [
     "a_tonicizedKey",
     "a_degree1",
     "a_degree2",
+    "a_harmonicRhythm",
+    "a_tenor",           # REQUIRED: Tenor35 encoder needs this
+    "a_alto",            # REQUIRED: Alto35 encoder needs this
+    "a_soprano",         # REQUIRED: Soprano35 encoder needs this
     "measureMisalignment",
     "qualityScoreNotes",
     "qualityNonChordTones",
@@ -599,7 +603,11 @@ def xml_txt_to_tsv(xml_file: str, txt_file: str, output_tsv: str, grid: float = 
             "a_localKey": chord_info["a_localKey"],
             "a_tonicizedKey": chord_info["a_tonicizedKey"],
             "a_degree1": int(chord_info["a_degree1"]),
-            "a_degree2": chord_info["a_degree2"],        # None (NOT 'None')
+            "a_degree2": chord_info["a_degree2"],        # string 'None'
+            "a_harmonicRhythm": 0,  # HarmonicRhythm7: duration bin (0-6), default to 0
+            "a_tenor": chord_info["a_root"],    # Tenor35: use root pitch as default
+            "a_alto": chord_info["a_root"],     # Alto35: use root pitch as default
+            "a_soprano": chord_info["a_root"],  # Soprano35: use root pitch as default
 
             "measureMisalignment": False,
 
