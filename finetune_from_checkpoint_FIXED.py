@@ -244,7 +244,8 @@ class MozartDatamodule(LightningDataModule):
         self.in_feats = dataset.features.in_feats if hasattr(dataset.features, 'in_feats') else None
 
     def collate_fn(self, batch):
-        """Collate function for val/test dataloaders (batch_size=1)"""
+        """Collate function for all dataloaders (batch_size=1)"""
+        import torch
         from chordgnn.utils.hgraph import add_reverse_edges_from_edge_index
 
         batch_inputs, edges, edge_type, batch_label, onset_div, name = batch[0]
@@ -262,7 +263,11 @@ class MozartDatamodule(LightningDataModule):
         edges = edges.squeeze(0)
         edge_type = edge_type.squeeze(0)
         edges, edge_type = add_reverse_edges_from_edge_index(edges, edge_type)
-        return batch_inputs, edges, edge_type, batch_label, onset_div, name
+
+        # Create lengths tensor for training compatibility (batch_size=1)
+        lengths = torch.tensor([batch_labels.shape[0]]).long()
+
+        return batch_inputs, edges, edge_type, batch_label, onset_div, lengths
 
     def setup(self, stage=None):
         # Split dataset into train/val/test based on filenames
