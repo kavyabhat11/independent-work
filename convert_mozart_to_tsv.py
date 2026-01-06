@@ -36,6 +36,9 @@ REAL_TSV_COLUMNS = [
     "j_offset",
     "s_duration",
     "s_measure",
+    "s_beat",
+    "ts_beats",
+    "ts_beat_type",
     "s_notes",
     "s_intervals",
     "s_isOnset",
@@ -583,6 +586,9 @@ def xml_txt_to_tsv(xml_file: str, txt_file: str, output_tsv: str, grid: float = 
             "j_offset": float(q_onset),
             "s_duration": float(max(grid, dur_by_bin.get(q_onset, grid))),
             "s_measure": float(meas),
+            "s_beat": float(beat_in_meas),          # beat position in measure
+            "ts_beats": int(ts_num),                # time signature numerator
+            "ts_beat_type": int(ts_den),            # time signature denominator
             "s_notes": repr(s_notes_list),          # e.g. ['E-2', 'G2']
             "s_intervals": "[]",                    # keep empty; can be computed later
             "s_isOnset": repr(s_is_onset),          # e.g. [True, True]

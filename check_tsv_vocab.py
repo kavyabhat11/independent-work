@@ -6,6 +6,7 @@ Check all TSV fields against their respective encoder vocabularies.
 import pandas as pd
 import numpy as np
 import sys
+import ast
 from pathlib import Path
 from chordgnn.utils.chord_representations_latest import (
     RomanNumeral31, ChordQuality11, LocalKey38, TonicizedKey38,
@@ -28,10 +29,10 @@ def check_tsv_vocab(tsv_dir):
         (PrimaryDegree22, 'a_degree1'),
         (SecondaryDegree22, 'a_degree2'),
         (HarmonicRhythm7, 'a_harmonicRhythm'),
+        (PitchClassSet121, 'a_pcset'),
         (Tenor35, 'a_tenor'),
         (Alto35, 'a_alto'),
         (Soprano35, 'a_soprano'),
-        # Skip PitchClassSet121 - complex tuple encoding
     ]
 
     tsv_path = Path(tsv_dir)
@@ -73,8 +74,24 @@ def check_tsv_vocab(tsv_dir):
                 # Separate NaNs from invalid values
                 # Note: 'None' (string) is valid in PrimaryDegree22/SecondaryDegree22 vocabs
                 has_nan = any(pd.isna(v) for v in unique_values)
-                invalid = [v for v in unique_values
-                          if not pd.isna(v) and v not in vocab]
+
+                # Special handling for a_pcset: parse tuple strings
+                if col_name == 'a_pcset':
+                    invalid = []
+                    for v in unique_values:
+                        if pd.isna(v):
+                            continue
+                        try:
+                            # Parse string like "(0, 4, 7)" to tuple (0, 4, 7)
+                            parsed_tuple = ast.literal_eval(v)
+                            if parsed_tuple not in vocab:
+                                invalid.append(v)
+                        except (ValueError, SyntaxError):
+                            # Parsing failed - invalid format
+                            invalid.append(v)
+                else:
+                    invalid = [v for v in unique_values
+                              if not pd.isna(v) and v not in vocab]
 
                 if has_nan:
                     nan_by_field[col_name].append(tsv_file.name)

@@ -148,6 +148,9 @@ class ChordGraphDataset(chordgnnDataset):
         return len(self.graphs)
 
     def __getitem__(self, idx):
+        # Handle both single index (int) and batch of indices (list/array)
+        if isinstance(idx, int):
+            idx = [idx]
         return [
             self.get_graph_attr(i)
             for i in idx
