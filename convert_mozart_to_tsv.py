@@ -436,10 +436,25 @@ def realize_roman_numeral(roman_str: str, local_key_tok: str):
         # Inversion (0,1,2,3...) as float (real TSV uses 0.0)
         out["a_inversion"] = float(rn.inversion())
 
-        # Quality text (music21 gives short names; make it readable)
-        # Your real file had e.g. "dominant seventh chord"
-        q = getattr(rn, "commonName", None) or getattr(rn, "quality", None) or "unknown"
-        out["a_quality"] = str(q)
+        # Quality - map to ChordQuality11 vocab format
+        # Valid: 'maj', 'min', '7', 'dim7', 'dim', 'aug', 'aug6', 'aug7', 'hdim7', 'maj7', 'min7'
+        quality_map = {
+            "major triad": "maj",
+            "minor triad": "min",
+            "dominant seventh chord": "7",
+            "major seventh chord": "maj7",
+            "minor seventh chord": "min7",
+            "diminished seventh chord": "dim7",
+            "half-diminished seventh chord": "hdim7",
+            "diminished triad": "dim",
+            "augmented triad": "aug",
+            "augmented sixth": "aug6",
+            "augmented seventh chord": "aug7",
+        }
+
+        q = getattr(rn, "commonName", None) or getattr(rn, "quality", None) or "maj"
+        q_str = str(q)
+        out["a_quality"] = quality_map.get(q_str, "maj")  # Default to 'maj' if unknown
 
         # pcset as tuple of pitch classes (0-11), literal string
         pcs = tuple(sorted({p.pitchClass for p in rn.pitches}))
