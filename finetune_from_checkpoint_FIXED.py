@@ -157,48 +157,134 @@ print()
 
 
 # -------------------------
-# Step 3: Setup Mozart data
+# Step 3: Setup Mozart data with custom raw_dir
 # -------------------------
 print("=" * 70)
 print("STEP 3: Setting up Mozart dataset cache")
 print("=" * 70 + "\n")
 
-if os.path.exists(CACHE):
-    shutil.rmtree(CACHE)
+# CRITICAL FIX: Use CACHE_ROOT as raw_dir so dataset doesn't download full dataset
+# Copy Mozart TSVs to the location where AugmentedNetChordDataset expects them
+dataset_dir = os.path.join(CACHE_ROOT, "AugmentedNetChordDataset", "dataset")
 
-os.makedirs(os.path.join(CACHE, "training"), exist_ok=True)
-os.makedirs(os.path.join(CACHE, "validation"), exist_ok=True)
-os.makedirs(os.path.join(CACHE, "test"), exist_ok=True)
+if os.path.exists(dataset_dir):
+    print(f"Cleaning existing dataset cache: {dataset_dir}")
+    shutil.rmtree(dataset_dir)
 
+os.makedirs(os.path.join(dataset_dir, "training"), exist_ok=True)
+os.makedirs(os.path.join(dataset_dir, "validation"), exist_ok=True)
+os.makedirs(os.path.join(dataset_dir, "test"), exist_ok=True)
+
+print(f"Copying Mozart TSVs to: {dataset_dir}")
 for tsv in glob.glob(f"{MOZART_ROOT}/training/*.tsv"):
-    shutil.copy(tsv, os.path.join(CACHE, "training"))
+    shutil.copy(tsv, os.path.join(dataset_dir, "training"))
 for tsv in glob.glob(f"{MOZART_ROOT}/validation/*.tsv"):
-    shutil.copy(tsv, os.path.join(CACHE, "validation"))
+    shutil.copy(tsv, os.path.join(dataset_dir, "validation"))
 for tsv in glob.glob(f"{MOZART_ROOT}/test/*.tsv"):
-    shutil.copy(tsv, os.path.join(CACHE, "test"))
+    shutil.copy(tsv, os.path.join(dataset_dir, "test"))
 
-train_ct = len(glob.glob(f"{CACHE}/training/*.tsv"))
-val_ct = len(glob.glob(f"{CACHE}/validation/*.tsv"))
-test_ct = len(glob.glob(f"{CACHE}/test/*.tsv"))
+train_ct = len(glob.glob(f"{dataset_dir}/training/*.tsv"))
+val_ct = len(glob.glob(f"{dataset_dir}/validation/*.tsv"))
+test_ct = len(glob.glob(f"{dataset_dir}/test/*.tsv"))
 print(f"✓ Data ready: {train_ct} train, {val_ct} val, {test_ct} test\n")
 
 
 # -------------------------
-# Step 4: Load datamodule (with correct version)
+# Step 4: Load datamodule with custom raw_dir (to prevent full dataset download)
 # -------------------------
 print("=" * 70)
-print("STEP 4: Loading Mozart datamodule")
+print("STEP 4: Creating custom Mozart datamodule")
 print("=" * 70 + "\n")
 
-print(f"Loading datamodule with version='{DATA_VERSION}'...")
-datamodule = st.data.AugmentedGraphDatamodule(
-    num_workers=NUM_WORKERS,
-    include_synth=False,
-    num_tasks=NUM_TASKS,
-    collection="all",
-    batch_size=BATCH_SIZE,
-    version=DATA_VERSION,
-)
+print(f"Creating dataset with version='{DATA_VERSION}' and raw_dir='{CACHE_ROOT}'...")
+
+# CRITICAL FIX: Create dataset directly with raw_dir to avoid downloading full dataset
+if DATA_VERSION == "v1.0.0":
+    dataset = st.data.datasets.chord.AugmentedNetChordGraphDataset(
+        raw_dir=CACHE_ROOT,  # ← This prevents downloading the full dataset!
+        force_reload=False,
+        nprocs=max(1, NUM_WORKERS),
+        include_synth=False,
+        num_tasks=NUM_TASKS,
+        collection="all",
+    )
+else:
+    dataset = st.data.datasets.chord.Augmented2022ChordGraphDataset(
+        raw_dir=CACHE_ROOT,  # ← This prevents downloading the full dataset!
+        force_reload=False,
+        nprocs=NUM_WORKERS,
+        include_synth=False,
+        num_tasks=NUM_TASKS,
+        collection="all",
+    )
+
+# Create a minimal datamodule wrapper
+class MozartDatamodule:
+    def __init__(self, dataset, batch_size, num_workers):
+        self.dataset = dataset
+        self.batch_size = batch_size
+        self.num_workers = num_workers
+        self.tasks = dataset.tasks
+        self.features = dataset.features
+        self.in_feats = dataset.features.in_feats if hasattr(dataset.features, 'in_feats') else None
+
+    def setup(self, stage=None):
+        # Split dataset into train/val/test based on filenames
+        import re
+        all_graphs = [(i, g) for i, g in enumerate(self.dataset.graphs)]
+
+        # Determine split based on graph names
+        train_idx = []
+        val_idx = []
+        test_idx = []
+
+        for i, g in all_graphs:
+            name = g.name
+            # Files in training/, validation/, test/ subdirs
+            if '/training/' in name or '\\training\\' in name:
+                train_idx.append(i)
+            elif '/validation/' in name or '\\validation\\' in name:
+                val_idx.append(i)
+            elif '/test/' in name or '\\test\\' in name:
+                test_idx.append(i)
+
+        from torch.utils.data import Subset, DataLoader
+
+        self.dataset_train = Subset(self.dataset, train_idx)
+        self.dataset_val = Subset(self.dataset, val_idx)
+        self.dataset_test = Subset(self.dataset, test_idx)
+
+    def train_dataloader(self):
+        from torch.utils.data import DataLoader
+        return DataLoader(
+            self.dataset_train,
+            batch_size=self.batch_size,
+            shuffle=True,
+            num_workers=self.num_workers,
+            collate_fn=self.dataset.collate_fn if hasattr(self.dataset, 'collate_fn') else None
+        )
+
+    def val_dataloader(self):
+        from torch.utils.data import DataLoader
+        return DataLoader(
+            self.dataset_val,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.num_workers,
+            collate_fn=self.dataset.collate_fn if hasattr(self.dataset, 'collate_fn') else None
+        )
+
+    def test_dataloader(self):
+        from torch.utils.data import DataLoader
+        return DataLoader(
+            self.dataset_test,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.num_workers,
+            collate_fn=self.dataset.collate_fn if hasattr(self.dataset, 'collate_fn') else None
+        )
+
+datamodule = MozartDatamodule(dataset, BATCH_SIZE, NUM_WORKERS)
 datamodule.setup()
 
 print(f"✓ Training: {len(datamodule.dataset_train)} samples (with augmentation)")
@@ -272,16 +358,44 @@ print(f"  n_layers:       {n_layers}")
 print(f"  num_tasks:      {len(tasks)}")
 print(f"  lr:             {LR} (50x smaller than before!)")
 print(f"  weight_decay:   {WEIGHT_DECAY}")
-print()
 
-model = st.models.chord.ChordPrediction(
-    in_feats=in_feats,
-    n_hidden=n_hidden,
-    tasks=tasks,  # CRITICAL: Use pretrained tasks!
-    n_layers=n_layers,
-    lr=LR,
-    weight_decay=WEIGHT_DECAY,
-)
+# CRITICAL FIX: Detect if checkpoint uses PostChordPrediction or ChordPrediction
+checkpoint_keys = list(state_dict.keys())
+has_frozen_model = any(k.startswith("frozen_model.") for k in checkpoint_keys)
+
+print(f"\nCheckpoint architecture detection:")
+if has_frozen_model:
+    print(f"  ✓ Detected PostChordPrediction (frozen_model.* keys)")
+    print(f"  → Building PostChordPrediction to match")
+
+    # Build a frozen_model (encoder)
+    from chordgnn.models.chord import ChordPredictionModel
+    frozen_model = ChordPredictionModel(in_feats=in_feats)
+
+    # Build PostChordPrediction
+    model = st.models.chord.PostChordPrediction(
+        in_feats=in_feats,
+        n_hidden=n_hidden,
+        tasks=tasks,  # CRITICAL: Use pretrained tasks!
+        n_layers=n_layers,
+        lr=LR,
+        weight_decay=WEIGHT_DECAY,
+        frozen_model=frozen_model,
+    )
+else:
+    print(f"  ✓ Detected ChordPrediction (encoder.* or module.* keys)")
+    print(f"  → Building ChordPrediction to match")
+
+    model = st.models.chord.ChordPrediction(
+        in_feats=in_feats,
+        n_hidden=n_hidden,
+        tasks=tasks,  # CRITICAL: Use pretrained tasks!
+        n_layers=n_layers,
+        lr=LR,
+        weight_decay=WEIGHT_DECAY,
+    )
+
+print()
 
 
 # -------------------------
@@ -291,46 +405,23 @@ print("=" * 70)
 print("STEP 7: Loading pretrained weights")
 print("=" * 70 + "\n")
 
-# Detect encoder prefix in current model
-model_keys = list(model.state_dict().keys())
+print("Attempting to load all pretrained weights...")
 
-def find_encoder_prefix(keys):
-    needles = [
-        "encoder.spelling_embedding.weight",
-        "encoder.pitch_embedding.weight",
-        "encoder.embedding.weight",
-        "encoder.encoder.layers.0",
-    ]
-    for needle in needles:
-        for k in keys:
-            if needle in k:
-                i = k.find("encoder.")
-                return k[:i]
-    return None
-
-target_prefix = find_encoder_prefix(model_keys)
-if target_prefix is None:
-    print("\n[DEBUG] Could not auto-detect encoder prefix. First 100 model keys:\n")
-    for k in model_keys[:100]:
-        print(k)
-    raise RuntimeError("Could not find encoder.* keys in current model.state_dict().")
-
-# Try to load ALL weights (not just encoder)
-# Since tasks match now, heads should load too!
-print("Attempting to load all pretrained weights (encoder + heads)...")
-
-# Strip any 'module.' prefix from checkpoint keys
+# Clean state dict - remove loss parameters
 cleaned_state_dict = {}
 for k, v in state_dict.items():
     # Skip loss parameters
     if k.startswith("train_loss.") or k.startswith("val_loss.") or k.startswith("test_loss."):
         continue
-    # Remove 'module.' prefix if present
-    if k.startswith("module."):
+
+    # For ChordPrediction (not PostChordPrediction), strip 'module.' prefix if present
+    if not has_frozen_model and k.startswith("module."):
         cleaned_state_dict[k[7:]] = v
     else:
+        # For PostChordPrediction, keep keys as-is (frozen_model.*)
         cleaned_state_dict[k] = v
 
+# Load with strict=False to allow missing keys (like optimizer state)
 missing, unexpected = model.load_state_dict(cleaned_state_dict, strict=False)
 
 print(f"\n✓ Pretrained weights loaded")
@@ -338,23 +429,49 @@ print(f"  Loaded tensors:     {len(cleaned_state_dict)}")
 print(f"  Missing keys:       {len(missing)}")
 print(f"  Unexpected keys:    {len(unexpected)}")
 
-# Check if important heads loaded
+# Verify weights actually loaded correctly
+if len(missing) > len(cleaned_state_dict) * 0.5:
+    print("\n⚠ WARNING: More than 50% of model keys are missing!")
+    print("  This suggests the checkpoint architecture doesn't match the model.")
+    print("  First 10 missing keys:")
+    for k in missing[:10]:
+        print(f"    {k}")
+    print("\n  First 10 checkpoint keys:")
+    for k in list(cleaned_state_dict.keys())[:10]:
+        print(f"    {k}")
+    raise RuntimeError("Weight loading failed - architecture mismatch!")
+
+# Check if encoder loaded
+encoder_keys_in_ckpt = [k for k in cleaned_state_dict.keys() if "encoder" in k]
+encoder_keys_in_model = [k for k in model.state_dict().keys() if "encoder" in k]
+encoder_loaded = len([k for k in encoder_keys_in_model if k not in missing]) > 0
+
+if encoder_loaded:
+    print(f"\n✓ Encoder loaded successfully ({len(encoder_keys_in_ckpt)} encoder keys)")
+else:
+    print(f"\n✗ ERROR: Encoder did NOT load!")
+    raise RuntimeError("Encoder failed to load - critical error!")
+
+# Check if important task heads loaded
 important_heads = ["romanNumeral", "localkey", "tonkey", "pcset", "bass"]
 loaded_heads = []
 missing_heads = []
 
 for head in important_heads:
-    head_key_pattern = f".{head}."  # e.g., ".romanNumeral."
-    head_keys = [k for k in cleaned_state_dict.keys() if head_key_pattern in k]
-    if head_keys:
+    # Check if any model keys for this head are NOT in missing list
+    head_keys_in_model = [k for k in model.state_dict().keys() if head in k]
+    head_keys_loaded = [k for k in head_keys_in_model if k not in missing]
+
+    if head_keys_loaded:
         loaded_heads.append(head)
     else:
         missing_heads.append(head)
 
 if loaded_heads:
-    print(f"\n✓ Task heads loaded successfully: {', '.join(loaded_heads)}")
+    print(f"✓ Task heads loaded: {', '.join(loaded_heads)}")
 if missing_heads:
-    print(f"⚠ Task heads NOT loaded (will be random): {', '.join(missing_heads)}")
+    print(f"⚠ Task heads NOT loaded (random init): {', '.join(missing_heads)}")
+    print(f"  → This is OK if you're adding new tasks, but check if unexpected!")
 
 print()
 
