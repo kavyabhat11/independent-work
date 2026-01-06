@@ -287,12 +287,16 @@ def simplify_roman_numeral_to_31class(roman_str: str):
     # Strategy: Remove trailing "6", "6/4", "6/5", "4/3", "2" patterns
     # Keep "7" only if it's part of a known chord type
 
-    # Remove inversion suffixes
+    # Remove inversion suffixes (figured bass numbers)
+    # Must handle augmented chords specially: III+43 -> III+, III+64 -> III+
+    base_clean = re.sub(r'\+\d+$', '+', base_clean)  # III+43 -> III+, V+6 -> V+
     base_clean = re.sub(r'6/5$', '', base_clean)  # sixth-five
     base_clean = re.sub(r'6/4$', '', base_clean)  # six-four
     base_clean = re.sub(r'4/3$', '', base_clean)  # four-three
     base_clean = re.sub(r'6$', '', base_clean)    # sixth
     base_clean = re.sub(r'(?<!7)2$', '', base_clean)  # second (but not "Fr7" -> "Fr")
+    base_clean = re.sub(r'(?<!7)4$', '', base_clean)  # fourth
+    base_clean = re.sub(r'(?<!7)3$', '', base_clean)  # third
 
     # Apply quality marker if found (from slash notation like ii/o2/i)
     if quality_marker:
@@ -332,6 +336,8 @@ def simplify_roman_numeral_to_31class(roman_str: str):
         'vi6': 'vi',
         'ii6': 'ii',
         'iii6': 'iii',
+        'Fr': 'Fr7',         # French augmented sixth needs the 7
+        'Ger': 'Ger7',       # German augmented sixth needs the 7
     }
 
     if base_clean in fallback_map:
