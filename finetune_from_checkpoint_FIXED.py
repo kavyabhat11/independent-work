@@ -311,7 +311,7 @@ class MozartDatamodule(LightningDataModule):
         from torch.utils.data import DataLoader
         return DataLoader(
             self.dataset_train,
-            batch_size=self.batch_size,
+            batch_size=1,  # Use batch_size=1 for training (simpler, same as val/test)
             shuffle=True,
             num_workers=self.num_workers,
             collate_fn=self.collate_fn
