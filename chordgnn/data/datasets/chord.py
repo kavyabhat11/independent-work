@@ -149,12 +149,12 @@ class ChordGraphDataset(chordgnnDataset):
 
     def __getitem__(self, idx):
         # Handle both single index (int) and batch of indices (list/array)
-        if isinstance(idx, int):
-            idx = [idx]
-        return [
-            self.get_graph_attr(i)
-            for i in idx
-        ]
+        if isinstance(idx, (list, tuple)):
+            # Batch sampler case - return list of graphs
+            return [self.get_graph_attr(i) for i in idx]
+        else:
+            # Single index case - return single graph
+            return self.get_graph_attr(idx)
 
     def get_graph_attr(self, idx):
         if self.graphs[idx].x.size(0) > self.max_size and self.graphs[idx].collection != "test":
