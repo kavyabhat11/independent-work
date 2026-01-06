@@ -50,7 +50,7 @@ torch.manual_seed(0)
 # -------------------------
 WANDB_ARTIFACT = "melkisedeath/chord_rec/model-kvd0jic5:v0"
 ARTIFACT_ROOT = "./artifacts"
-MOZART_ROOT = "./mozart_tsv_31class"  # Updated to use 31-class vocabulary TSVs
+MOZART_ROOT = "/mozart_tsv"  # Updated to use 31-class vocabulary TSVs
 
 CACHE_ROOT = "/scratch/network/kb9520/chordgnn_data"
 CACHE = os.path.join(CACHE_ROOT, "AugmentedNetChordDataset", "dataset")
