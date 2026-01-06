@@ -531,6 +531,12 @@ else:
     print(f"\n✗ ERROR: Encoder did NOT load!")
     raise RuntimeError("Encoder failed to load - critical error!")
 
+# CRITICAL: Freeze the frozen_model parameters
+print("\nFreezing frozen_model parameters...")
+for param in model.frozen_model.parameters():
+    param.requires_grad = False
+print("✓ frozen_model is now frozen (non-trainable)")
+
 # Check if important task heads loaded
 important_heads = ["romanNumeral", "localkey", "tonkey", "pcset", "bass"]
 loaded_heads = []
