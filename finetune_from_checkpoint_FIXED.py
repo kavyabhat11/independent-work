@@ -50,7 +50,7 @@ torch.manual_seed(0)
 # -------------------------
 WANDB_ARTIFACT = "melkisedeath/chord_rec/model-kvd0jic5:v0"
 ARTIFACT_ROOT = "./artifacts"
-MOZART_ROOT = "/mozart_tsv"  # Updated to use 31-class vocabulary TSVs
+MOZART_ROOT = "./mozart_dataset"  # Should contain training/validation/test subdirs (from split_mozart_data.py)
 
 CACHE_ROOT = "/scratch/network/kb9520/chordgnn_data"
 CACHE = os.path.join(CACHE_ROOT, "AugmentedNetChordDataset", "dataset")
@@ -213,7 +213,7 @@ print(f"Creating dataset with version='{DATA_VERSION}' and raw_dir='{CACHE_ROOT}
 if DATA_VERSION == "v1.0.0":
     dataset = st.data.datasets.chord.AugmentedNetChordGraphDataset(
         raw_dir=CACHE_ROOT,  # ← This prevents downloading the full dataset!
-        force_reload=False,
+        force_reload=True,   # ← Force reprocessing of Mozart TSVs
         nprocs=max(1, NUM_WORKERS),
         include_synth=False,
         num_tasks=NUM_TASKS,
@@ -222,7 +222,7 @@ if DATA_VERSION == "v1.0.0":
 else:
     dataset = st.data.datasets.chord.Augmented2022ChordGraphDataset(
         raw_dir=CACHE_ROOT,  # ← This prevents downloading the full dataset!
-        force_reload=False,
+        force_reload=True,   # ← Force reprocessing of Mozart TSVs
         nprocs=NUM_WORKERS,
         include_synth=False,
         num_tasks=NUM_TASKS,
