@@ -433,8 +433,8 @@ def realize_roman_numeral(roman_str: str, local_key_tok: str):
         out["a_bass"] = rn.bass().name
         out["a_root"] = rn.root().name
 
-        # Inversion (0,1,2,3...) as float (real TSV uses 0.0)
-        out["a_inversion"] = float(rn.inversion())
+        # Inversion as int (vocab uses integers 0,1,2,3)
+        out["a_inversion"] = int(rn.inversion())
 
         # Quality - map to ChordQuality11 vocab format
         # Valid: 'maj', 'min', '7', 'dim7', 'dim', 'aug', 'aug6', 'aug7', 'hdim7', 'maj7', 'min7'
@@ -460,20 +460,23 @@ def realize_roman_numeral(roman_str: str, local_key_tok: str):
         pcs = tuple(sorted({p.pitchClass for p in rn.pitches}))
         out["a_pcset"] = repr(pcs)
 
-        # Local key token: keep your analysis token (like A-), but normalize if empty
-        out["a_localKey"] = local_key_tok if local_key_tok else kobj.tonic.name
+        # Local key token: normalize to hyphen notation (Eb -> E-, Bb -> B-)
+        local_key_normalized = (local_key_tok if local_key_tok else kobj.tonic.name)
+        local_key_normalized = local_key_normalized.replace('b', '-').replace('##', '#')
+        out["a_localKey"] = local_key_normalized
 
-        # Degree1: scale degree (int)
+        # Degree1: scale degree as STRING (not int!)
         try:
-            out["a_degree1"] = int(rn.scaleDegree)
+            out["a_degree1"] = str(int(rn.scaleDegree))
         except Exception:
-            out["a_degree1"] = 1
+            out["a_degree1"] = '1'
 
-        # Degree2: keep None for now (secondary functions are messy across notations)
-        out["a_degree2"] = None
+        # Degree2: string 'None' for non-secondary functions (not Python None!)
+        out["a_degree2"] = 'None'
 
-        # Tonicized key: if secondary, could infer; otherwise local key
-        out["a_tonicizedKey"] = out["a_localKey"]
+        # Tonicized key: use local_key_normalized for now
+        # TODO: compute actual tonicized key from tonkey Roman numeral + local key
+        out["a_tonicizedKey"] = local_key_normalized
 
         return out
 
