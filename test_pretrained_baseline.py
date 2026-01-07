@@ -228,8 +228,17 @@ def main():
     if len(tasks_from_ckpt) == 0:
         raise RuntimeError("Could not detect any tasks from checkpoint! Check key names.")
 
-    num_tasks_actual = len(tasks_from_ckpt)
-    print("✓ num_tasks = {}".format(num_tasks_actual))
+    # Dataset only supports num_tasks of 6, 11, or 14
+    # Cap at 14 (the max)
+    num_tasks_detected = len(tasks_from_ckpt)
+    if num_tasks_detected <= 6:
+        num_tasks_actual = 6
+    elif num_tasks_detected <= 11:
+        num_tasks_actual = 11
+    else:
+        num_tasks_actual = 14
+
+    print("✓ Detected {} tasks from checkpoint, using num_tasks={}".format(num_tasks_detected, num_tasks_actual))
 
     # Get task order from the dataset class
     if DATA_VERSION == "v1.0.0":
