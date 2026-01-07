@@ -11,9 +11,8 @@ It also:
 - Detects DATA_VERSION from ckpt romanNumeral head (31 -> v2.0.0, 76 -> v1.0.0)
 - Forces n_hidden=256 if ckpt heads imply 256 (yours do)
 - Splits train/val/test by matching graph.name to MOZART_ROOT split filenames
-- Freezes frozen_model by default, then unfreezes ONLY last 1 GCN layer + GRU
-  (model has only 2 total GCN layers; unfreezing both = full fine-tuning)
-  (set UNFREEZE_LAST_N_GCN_LAYERS=0 and UNFREEZE_GRU=False to freeze all encoder layers)
+- Freezes frozen_model encoder entirely, only trains task-specific heads
+  (set UNFREEZE_LAST_N_GCN_LAYERS>0 or UNFREEZE_GRU=True to unfreeze encoder layers)
 
 Run:
   export MOZART_ROOT=/path/to/mozart_dataset   # contains training/validation/test/*.tsv
@@ -62,11 +61,10 @@ TASK_ORDER = [
     "root", "romanNumeral", "hrhythm", "pcset", "bass", "tenor", "alto", "soprano"
 ]
 
-# How many GCN layers to unfreeze from the end (0 = fully frozen, 1 = last GCN layer only)
-# Model has only 2 total GCN layers, so 2 would unfreeze everything
-UNFREEZE_LAST_N_GCN_LAYERS = int(os.environ.get("UNFREEZE_LAST_N_GCN_LAYERS", "1"))
+# How many GCN layers to unfreeze from the end (0 = fully frozen encoder, only train heads)
+UNFREEZE_LAST_N_GCN_LAYERS = int(os.environ.get("UNFREEZE_LAST_N_GCN_LAYERS", "0"))
 # Also unfreeze GRU and final projection layers
-UNFREEZE_GRU = os.environ.get("UNFREEZE_GRU", "True").lower() == "true"
+UNFREEZE_GRU = os.environ.get("UNFREEZE_GRU", "False").lower() == "true"
 
 torch.manual_seed(0)
 
