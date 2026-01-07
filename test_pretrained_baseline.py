@@ -1,241 +1,412 @@
 #!/usr/bin/env python3
 """
-Test pretrained ChordGNN checkpoint on Mozart validation data.
-Get baseline accuracy BEFORE any finetuning.
+DEBUG baseline eval on EXACTLY ONE Mozart validation TSV
+using the PRETRAINED checkpoint:
+  melkisedeath/chord_rec/model-kvd0jic5:v0
+
+This version is "anchored to checkpoint truth":
+- Uses task output dims inferred from the checkpoint heads (NOT available_representations)
+- Forces n_hidden=256 to match checkpoint head weights
+- Strips "frozen_model." prefix when loading weights
+- Handles onset-level vs frame-level by aligning targets to pred length
+- Masks invalid labels (<0)
+- Runs ONE graph (one TSV) to make debugging easy
+
+Usage:
+  export MOZART_ROOT=/path/to/mozart_dataset              # must contain validation/*.tsv
+  export DEBUG_TSV=/path/to/mozart_dataset/validation/X.tsv   # optional
+  python debug_onefile_baseline.py
+
+Notes:
+- Keep NUM_WORKERS=0 while debugging.
+- If wandb is not logged in: wandb login
 """
 
 import os
-import torch
-import chordgnn as st
-from pytorch_lightning import Trainer
-
-# Set default dtype to avoid compatibility issues
-torch.set_default_dtype(torch.float32)
-
-# Same config as finetuning script
-WANDB_ARTIFACT = "melkisedeath/chord_rec/model-kvd0jic5:v0"
-ARTIFACT_ROOT = "./artifacts"
-MOZART_ROOT = os.environ.get("MOZART_ROOT", "./mozart_dataset")
-CACHE_ROOT = "/scratch/network/kb9520/chordgnn_data"
-BATCH_SIZE = 1
-NUM_WORKERS = 8
-
-print("="*70)
-print("TESTING PRETRAINED CHECKPOINT ON MOZART DATA")
-print("="*70)
-print()
-
-# Step 1: Download checkpoint
-print("Step 1: Downloading pretrained checkpoint...")
-import wandb
-api = wandb.Api()
-artifact = api.artifact(WANDB_ARTIFACT, type="model")
-artifact_dir = artifact.download(root=ARTIFACT_ROOT)
-PRETRAINED_CKPT = os.path.join(artifact_dir, "model.ckpt")
-print(f"✓ Checkpoint: {PRETRAINED_CKPT}\n")
-
-# Step 2: Load checkpoint to inspect
-print("Step 2: Inspecting checkpoint...")
-ckpt = torch.load(PRETRAINED_CKPT, map_location="cpu")
-state_dict = ckpt.get("state_dict", {})
-pretrained_hparams = ckpt.get("hyper_parameters", {})
-
-# HARDCODED: We know from finetuning script it's 31 classes
-# Auto-detection was picking up hidden layers (256) instead of vocab size (31)
-rn_vocab_size = 31
-DATA_VERSION = "v2.0.0"
-print(f"✓ Using DATA_VERSION={DATA_VERSION} (31-class RomanNumeral vocab)\n")
-
-# Step 3: Prepare Mozart validation data
-print("Step 3: Preparing Mozart validation data...")
 import glob
 import shutil
-
-dataset_dir = os.path.join(CACHE_ROOT,
-                           "AugmentedNetLatestChordDataset" if DATA_VERSION == "v2.0.0" else "AugmentedNetChordDataset",
-                           "dataset")
-
-# Clean existing cache
-if os.path.exists(dataset_dir):
-    print(f"Cleaning existing dataset cache: {dataset_dir}")
-    shutil.rmtree(dataset_dir)
-
-os.makedirs(dataset_dir, exist_ok=True)
-os.makedirs(os.path.join(dataset_dir, "validation"), exist_ok=True)
-
-# Copy ONLY validation files
-for tsv in glob.glob(f"{MOZART_ROOT}/validation/*.tsv"):
-    shutil.copy(tsv, os.path.join(dataset_dir, "validation"))
-
-val_ct = len(glob.glob(f"{dataset_dir}/validation/*.tsv"))
-print(f"✓ Copied {val_ct} validation files\n")
-
-# Step 4: Create dataset
-print("Step 4: Creating dataset...")
-if DATA_VERSION == "v1.0.0":
-    dataset = st.data.datasets.chord.AugmentedNetChordGraphDataset(
-        raw_dir=CACHE_ROOT,
-        force_reload=True,
-        nprocs=max(1, NUM_WORKERS),
-        include_synth=False,
-        num_tasks=11,
-        collection="all",
-    )
-else:
-    dataset = st.data.datasets.chord.Augmented2022ChordGraphDataset(
-        raw_dir=CACHE_ROOT,
-        force_reload=True,
-        nprocs=NUM_WORKERS,
-        include_synth=False,
-        num_tasks=11,
-        collection="all",
-    )
-
-print(f"✓ Dataset created with {len(dataset.graphs)} graphs\n")
-
-# Step 5: Load model from checkpoint
-print("Step 5: Loading pretrained model...")
-from pytorch_lightning import LightningModule
-
-# Get tasks and architecture from pretrained checkpoint
-if DATA_VERSION == "v1.0.0":
-    from chordgnn.utils.chord_representations import available_representations
-else:
-    from chordgnn.utils.chord_representations_latest import available_representations
-
-pretrained_tasks = available_representations
-
-# Get architecture params
-pretrained_n_hidden = int(pretrained_hparams.get("n_hidden", 512))
-pretrained_n_layers = int(pretrained_hparams.get("n_layers", 6))
-pretrained_dropout = float(pretrained_hparams.get("dropout", 0.5))
-pretrained_use_nade = bool(pretrained_hparams.get("use_nade", False))
-pretrained_use_jk = bool(pretrained_hparams.get("use_jk", False))
-pretrained_use_rotograd = bool(pretrained_hparams.get("use_rotograd", False))
-
-# Get in_feats from dataset
-b0 = next(iter(torch.utils.data.DataLoader(dataset, batch_size=1)))
-in_feats = int(b0[0].shape[-1])
-
-print(f"Architecture: n_hidden={pretrained_n_hidden}, n_layers={pretrained_n_layers}")
-
-# Build model
-checkpoint_keys = list(state_dict.keys())
-has_frozen_model = any(k.startswith("frozen_model.") for k in checkpoint_keys)
-
-# Always use ChordPredictionModel (the only model class available)
-print("Using ChordPredictionModel architecture")
-
-# Only pass parameters that ChordPredictionModel actually accepts
-model = st.models.ChordPredictionModel(
-    in_feats=in_feats,
-    n_hidden=pretrained_n_hidden,
-    tasks=pretrained_tasks,
-    n_layers=pretrained_n_layers,
-    dropout=pretrained_dropout,
-    use_nade=pretrained_use_nade,
-    use_jk=pretrained_use_jk,
-)
-print(f"  use_nade={pretrained_use_nade}, use_jk={pretrained_use_jk}")
-
-# Load weights - strip "frozen_model." prefix if present
-cleaned_state_dict = {}
-for k, v in state_dict.items():
-    if k.startswith("train_loss.") or k.startswith("val_loss.") or k.startswith("test_loss."):
-        continue
-
-    # Strip prefixes
-    clean_key = k
-    if clean_key.startswith("frozen_model."):
-        clean_key = clean_key[13:]  # Remove "frozen_model."
-    if clean_key.startswith("module."):
-        clean_key = clean_key[7:]  # Remove "module."
-
-    cleaned_state_dict[clean_key] = v
-
-missing, unexpected = model.load_state_dict(cleaned_state_dict, strict=False)
-print(f"✓ Model loaded ({len(cleaned_state_dict)} weights, {len(missing)} missing, {len(unexpected)} unexpected)\n")
-
-# Step 6: Run evaluation
-print("="*70)
-print("RUNNING EVALUATION ON VALIDATION SET")
-print("="*70)
-print()
-
-# Put model in eval mode
-model.eval()
-model = model.cuda() if torch.cuda.is_available() else model
-
-# Create simple dataloader
-from torch.utils.data import DataLoader
-val_loader = DataLoader(dataset, batch_size=1, num_workers=0, shuffle=False)
-
-# Track metrics
+import math
+from typing import Optional
 from collections import defaultdict
-correct_by_task = defaultdict(int)
-total_by_task = defaultdict(int)
 
-with torch.no_grad():
-    for batch_idx, batch in enumerate(val_loader):
-        batch_inputs, edges, edge_type, batch_label, onset_div, name = batch
+import torch
 
-        # Move to device
-        device = model.device if hasattr(model, 'device') else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        batch_inputs = batch_inputs.squeeze(0).float().to(device)
-        edges = edges.squeeze(0).to(device)
-        edge_type = edge_type.squeeze(0).to(device)
-        onset_div = onset_div.squeeze().to(device)
+# ----------------------------
+# CONFIG
+# ----------------------------
+WANDB_ARTIFACT = os.environ.get("WANDB_ARTIFACT", "melkisedeath/chord_rec/model-kvd0jic5:v0")
+ARTIFACT_ROOT = os.environ.get("ARTIFACT_ROOT", "./artifacts")
 
-        # Prepare labels
-        batch_labels = batch_label.squeeze(0)
-        batch_label_dict = {task: batch_labels[:, i].squeeze().long().to(device)
-                           for i, task in enumerate(available_representations.keys())}
+MOZART_ROOT = os.environ.get("MOZART_ROOT", "./mozart_dataset")
+DEBUG_TSV = os.environ.get("DEBUG_TSV", "")  # optional exact TSV path
 
-        # Forward pass
-        from chordgnn.utils.hgraph import add_reverse_edges_from_edge_index
-        from chordgnn.models.chord import unique_onsets
+CACHE_ROOT = os.environ.get("CACHE_ROOT", "/scratch/network/kb9520/chordgnn_data")
+DATA_VERSION = os.environ.get("DATA_VERSION", "v2.0.0")
 
-        # Extract onset edges (edge_type == 0)
-        onset_edges = edges[:, edge_type == 0]
+NUM_WORKERS = int(os.environ.get("NUM_WORKERS", "0"))  # keep 0 for debugging
 
-        # Add reverse edges
-        edges, edge_type = add_reverse_edges_from_edge_index(edges, edge_type)
+# The ONLY correct task dims for this checkpoint (from your ckpt head weights)
+TASK_DIMS = {
+    "localkey": 38,
+    "tonkey": 38,
+    "degree1": 22,
+    "degree2": 22,
+    "quality": 11,
+    "inversion": 4,
+    "root": 35,
+    "romanNumeral": 31,
+    "hrhythm": 7,
+    "pcset": 121,
+    "bass": 35,
+    "tenor": 35,
+    "alto": 35,
+    "soprano": 35,
+}
 
-        # Compute onset indices
-        onset_idx = unique_onsets(onset_div)
+# Must match checkpoint heads
+FORCE_N_HIDDEN = 256
 
-        # Call model with batch tuple (x, edge_index, edge_type, onset_index, onset_idx, lengths)
-        preds = model((batch_inputs, edges, edge_type, onset_edges, onset_idx, None))
 
-        # Compute accuracy for each task
-        for task_name, pred in preds.items():
-            if task_name in batch_label_dict:
-                target = batch_label_dict[task_name]
-                pred_classes = pred.argmax(dim=-1)
-                correct = (pred_classes == target).sum().item()
-                total = target.numel()
+# ----------------------------
+# PATCH: old torch can't handle nn.Linear(device=None,dtype=None)
+# and your environment appears to have that issue.
+# ----------------------------
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.nn import init
+from torch.nn.parameter import Parameter
 
-                correct_by_task[task_name] += correct
-                total_by_task[task_name] += total
+class PatchedLinear(nn.Module):
+    __constants__ = ["in_features", "out_features"]
+    in_features: int
+    out_features: int
+    weight: Parameter
 
-        if (batch_idx + 1) % 10 == 0:
-            print(f"Processed {batch_idx + 1}/{len(val_loader)} batches...")
+    def __init__(self, in_features, out_features, bias=True, device=None, dtype=None):
+        super().__init__()
+        # Some call sites in your repo may pass weird types; fail loudly with context
+        try:
+            self.in_features = int(in_features)
+        except Exception:
+            raise TypeError("PatchedLinear: in_features is not int-like: {} ({})".format(in_features, type(in_features)))
+        try:
+            self.out_features = int(out_features)
+        except Exception:
+            raise TypeError("PatchedLinear: out_features is not int-like: {} ({})".format(out_features, type(out_features)))
 
-print("\n" + "="*70)
-print("BASELINE RESULTS (Pretrained on Mozart Validation)")
-print("="*70)
+        factory_kwargs = {}
+        if device is not None:
+            factory_kwargs["device"] = device
+        if dtype is not None:
+            factory_kwargs["dtype"] = dtype
 
-for task in sorted(correct_by_task.keys()):
-    if total_by_task[task] > 0:
-        acc = 100.0 * correct_by_task[task] / total_by_task[task]
-        print(f"{task:20s}: {acc:6.2f}% ({correct_by_task[task]}/{total_by_task[task]})")
+        self.weight = Parameter(torch.empty((self.out_features, self.in_features), **factory_kwargs))
+        if bias:
+            self.bias = Parameter(torch.empty(self.out_features, **factory_kwargs))
+        else:
+            self.register_parameter("bias", None)
 
-# Highlight Roman numeral
-if 'romanNumeral' in correct_by_task:
-    rn_acc = 100.0 * correct_by_task['romanNumeral'] / total_by_task['romanNumeral']
-    print(f"\n{'='*70}")
-    print(f"ROMAN NUMERAL BASELINE: {rn_acc:.2f}%")
-    print(f"{'='*70}")
+        self.reset_parameters()
 
-print("\n✓ Baseline evaluation complete!")
-print("This is the accuracy to BEAT with finetuning.")
+    def reset_parameters(self):
+        init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+        if self.bias is not None:
+            fan_in, _ = init._calculate_fan_in_and_fan_out(self.weight)
+            bound = 1 / math.sqrt(fan_in) if fan_in > 0 else 0
+            init.uniform_(self.bias, -bound, bound)
+
+    def forward(self, input):
+        return F.linear(input, self.weight, self.bias)
+
+# monkeypatch
+nn.Linear = PatchedLinear
+
+
+# ----------------------------
+# HELPERS
+# ----------------------------
+def banner(msg: str):
+    print("\n" + "=" * 78)
+    print(msg)
+    print("=" * 78)
+
+
+def download_wandb_ckpt(artifact_path: str, root: str) -> str:
+    import wandb
+    a = wandb.Api().artifact(artifact_path, type="model")
+    d = a.download(root=root)
+    ckpt = os.path.join(d, "model.ckpt")
+    if not os.path.exists(ckpt):
+        raise FileNotFoundError("Expected model.ckpt at {}, but not found.".format(ckpt))
+    return ckpt
+
+
+def strip_state_dict_prefixes(state_dict: dict) -> dict:
+    cleaned = {}
+    for k, v in state_dict.items():
+        if k.startswith(("train_loss.", "val_loss.", "test_loss.")):
+            continue
+        nk = k
+        if nk.startswith("frozen_model."):
+            nk = nk[len("frozen_model."):]
+        if nk.startswith("module."):
+            nk = nk[len("module."):]
+        cleaned[nk] = v
+    return cleaned
+
+
+def masked_accuracy(pred_logits: torch.Tensor, target: torch.Tensor):
+    pred_classes = pred_logits.argmax(dim=-1)
+    mask = target >= 0
+    total = int(mask.sum().item())
+    if total == 0:
+        return 0, 0
+    correct = int((pred_classes[mask] == target[mask]).sum().item())
+    return correct, total
+
+
+def align_target_to_pred_length(target: torch.Tensor, pred_len: int, onset_idx: Optional[torch.Tensor]):
+    """
+    If preds are onset-level and targets are frame-level, index targets by onset_idx.
+    Otherwise truncate/pad to match.
+    """
+    if target.ndim != 1:
+        target = target.view(-1)
+
+    if target.shape[0] == pred_len:
+        return target
+
+    if onset_idx is not None:
+        onset_idx_flat = onset_idx.view(-1).long()
+        if onset_idx_flat.shape[0] == pred_len:
+            max_i = int(onset_idx_flat.max().item()) if onset_idx_flat.numel() > 0 else -1
+            if target.shape[0] >= max_i + 1:
+                return target[onset_idx_flat]
+
+    if target.shape[0] > pred_len:
+        return target[:pred_len]
+
+    pad = torch.full((pred_len - target.shape[0],), -1, dtype=target.dtype, device=target.device)
+    return torch.cat([target, pad], dim=0)
+
+
+def copy_all_validation_tsvs_into_cache(mozart_root: str, cache_root: str, data_version: str) -> int:
+    if data_version == "v2.0.0":
+        base = os.path.join(cache_root, "AugmentedNetLatestChordDataset", "dataset")
+    else:
+        base = os.path.join(cache_root, "AugmentedNetChordDataset", "dataset")
+
+    val_dir = os.path.join(base, "validation")
+
+    if os.path.exists(base):
+        print("Cleaning existing dataset cache at: {}".format(base))
+        shutil.rmtree(base)
+    os.makedirs(val_dir, exist_ok=True)
+
+    candidates = sorted(glob.glob(os.path.join(mozart_root, "validation", "*.tsv")))
+    if not candidates:
+        raise FileNotFoundError("No TSVs found under {}".format(os.path.join(mozart_root, "validation", "*.tsv")))
+
+    for f in candidates:
+        shutil.copy(f, os.path.join(val_dir, os.path.basename(f)))
+
+    print("✓ Copied {} validation TSVs into cache:\n  {}".format(len(candidates), val_dir))
+    return len(candidates)
+
+
+# ----------------------------
+# MAIN
+# ----------------------------
+def main():
+    banner("DEBUG: PRETRAINED CHORDGNN BASELINE ON ONE MOZART VALIDATION TSV")
+
+    print("MOZART_ROOT    = {}".format(MOZART_ROOT))
+    print("DEBUG_TSV      = {}".format(DEBUG_TSV if DEBUG_TSV else "(auto: first validation/*.tsv)"))
+    print("CACHE_ROOT     = {}".format(CACHE_ROOT))
+    print("DATA_VERSION   = {}".format(DATA_VERSION))
+    print("WANDB_ARTIFACT = {}".format(WANDB_ARTIFACT))
+
+    banner("Step 1: Download ckpt")
+    ckpt_path = download_wandb_ckpt(WANDB_ARTIFACT, ARTIFACT_ROOT)
+    print("✓ ckpt: {}".format(ckpt_path))
+
+    banner("Step 2: Load ckpt")
+    ckpt = torch.load(ckpt_path, map_location="cpu")
+    state_dict = ckpt.get("state_dict", {})
+    hparams = ckpt.get("hyper_parameters", {}) or {}
+    print("ckpt has {} state_dict keys".format(len(state_dict)))
+    # print a couple useful hparams if present
+    for k in ("n_layers", "dropout", "use_nade", "use_jk"):
+        if k in hparams:
+            print("hparam {} = {}".format(k, hparams[k]))
+
+    banner("Step 3: Put ONE TSV into cache")
+    copy_all_validation_tsvs_into_cache(MOZART_ROOT, CACHE_ROOT, DATA_VERSION)
+
+    banner("Step 4: Build dataset (single graph)")
+    import chordgnn as st
+
+    if DATA_VERSION == "v1.0.0":
+        DatasetCls = st.data.datasets.chord.AugmentedNetChordGraphDataset
+    else:
+        DatasetCls = st.data.datasets.chord.Augmented2022ChordGraphDataset
+
+    # Try validation split, fallback to all
+    try:
+        dataset = DatasetCls(
+            raw_dir=CACHE_ROOT,
+            force_reload=True,
+            nprocs=max(1, NUM_WORKERS),
+            include_synth=False,
+            num_tasks=11,
+            collection="validation",
+        )
+        print("✓ dataset built with collection='validation'")
+    except Exception as e:
+        print("collection='validation' failed, falling back to collection='all'")
+        print("  error: {}".format(e))
+        dataset = DatasetCls(
+            raw_dir=CACHE_ROOT,
+            force_reload=True,
+            nprocs=max(1, NUM_WORKERS),
+            include_synth=False,
+            num_tasks=11,
+            collection="all",
+        )
+        print("✓ dataset built with collection='all'")
+
+    print("Dataset length:", len(dataset))
+
+    banner("Step 5: Build model (checkpoint-truth tasks) + load weights")
+    tasks = TASK_DIMS.copy()
+    task_names = list(tasks.keys())
+    print("✓ Tasks ({}): {}".format(len(task_names), task_names))
+
+    # infer in_feats
+    b0 = next(iter(torch.utils.data.DataLoader(dataset, batch_size=1, num_workers=0)))
+    x0 = b0[0]
+    in_feats = int(x0.shape[-1])
+    print("✓ in_feats =", in_feats)
+
+    # use ckpt-consistent architecture
+    n_hidden = FORCE_N_HIDDEN
+    n_layers = int(hparams.get("n_layers", 6))
+    dropout = float(hparams.get("dropout", 0.5))
+    use_nade = bool(hparams.get("use_nade", False))
+    use_jk = bool(hparams.get("use_jk", False))
+
+    print("✓ Forcing n_hidden={} (matches ckpt heads)".format(n_hidden))
+    print("✓ Using n_layers={}, dropout={}, use_nade={}, use_jk={}".format(n_layers, dropout, use_nade, use_jk))
+
+    model = st.models.ChordPredictionModel(
+        in_feats=in_feats,
+        n_hidden=n_hidden,
+        tasks=tasks,              # IMPORTANT: ints, not types
+        n_layers=n_layers,
+        dropout=dropout,
+        use_nade=use_nade,
+        use_jk=use_jk,
+    )
+
+    cleaned = strip_state_dict_prefixes(state_dict)
+    missing, unexpected = model.load_state_dict(cleaned, strict=False)
+    print("✓ Loaded weights: {} tensors".format(len(cleaned)))
+    print("  missing={}, unexpected={}".format(len(missing), len(unexpected)))
+    if unexpected:
+        print("  unexpected sample:", unexpected[:10])
+    if missing:
+        print("  missing sample:", missing[:10])
+
+    banner("Step 6: Evaluation over ALL validation graphs")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = model.to(device).eval()
+
+    from torch.utils.data import DataLoader
+    from chordgnn.utils.hgraph import add_reverse_edges_from_edge_index
+    from chordgnn.models.chord import unique_onsets
+
+    loader = DataLoader(dataset, batch_size=1, num_workers=0, shuffle=False)
+
+    dataset_task_order = [
+        "localkey", "tonkey", "degree1", "degree2", "quality", "inversion",
+        "root", "romanNumeral", "hrhythm", "pcset", "bass", "tenor", "alto", "soprano"
+    ]
+    N_TASKS = len(dataset_task_order)
+
+    correct_by_task = defaultdict(int)
+    total_by_task = defaultdict(int)
+
+    # CSR-like: exact chord match root+quality+inversion
+    csr_correct = 0
+    csr_total = 0
+
+    with torch.no_grad():
+        for idx, batch in enumerate(loader):
+            x, edges, edge_type, labels, onset_div, name = batch
+
+            x = x.squeeze(0).float().to(device)
+            edges = edges.squeeze(0).to(device)
+            edge_type = edge_type.squeeze(0).to(device)
+            onset_div = onset_div.squeeze().to(device)
+
+            # labels: (T, 15, 1) -> (T, 15) -> take first 14
+            labels = labels.squeeze(0)
+            if labels.ndim == 3 and labels.shape[-1] == 1:
+                labels = labels.squeeze(-1)
+            if labels.ndim != 2 or labels.shape[1] < N_TASKS:
+                raise RuntimeError("Bad labels shape {} for {}".format(tuple(labels.shape), name))
+            labels = labels[:, :N_TASKS]  # ignore extra 15th column
+
+            onset_edges = edges[:, edge_type == 0]
+            edges2, edge_type2 = add_reverse_edges_from_edge_index(edges, edge_type)
+            onset_idx = unique_onsets(onset_div)
+
+            preds = model((x, edges2, edge_type2, onset_edges, onset_idx, None))
+
+            # per-task accuracy
+            for t_i, tname in enumerate(dataset_task_order):
+                if tname not in preds:
+                    continue
+                pred_logits = preds[tname]
+                target = labels[:, t_i].long().to(device)
+                target_aligned = align_target_to_pred_length(target, pred_logits.shape[0], onset_idx)
+                c, tot = masked_accuracy(pred_logits, target_aligned)
+                correct_by_task[tname] += c
+                total_by_task[tname] += tot
+
+            # CSR-like exact match
+            if all(k in preds for k in ("root", "quality", "inversion")):
+                r_pred = preds["root"].argmax(dim=-1)
+                q_pred = preds["quality"].argmax(dim=-1)
+                i_pred = preds["inversion"].argmax(dim=-1)
+
+                r_t = align_target_to_pred_length(labels[:, dataset_task_order.index("root")].long().to(device), r_pred.shape[0], onset_idx)
+                q_t = align_target_to_pred_length(labels[:, dataset_task_order.index("quality")].long().to(device), q_pred.shape[0], onset_idx)
+                i_t = align_target_to_pred_length(labels[:, dataset_task_order.index("inversion")].long().to(device), i_pred.shape[0], onset_idx)
+
+                mask = (r_t >= 0) & (q_t >= 0) & (i_t >= 0)
+                tot = int(mask.sum().item())
+                if tot > 0:
+                    corr = int(((r_pred == r_t) & (q_pred == q_t) & (i_pred == i_t) & mask).sum().item())
+                    csr_correct += corr
+                    csr_total += tot
+
+            if (idx + 1) % 10 == 0:
+                print("Processed {}/{} graphs...".format(idx + 1, len(loader)))
+
+    banner("BASELINE RESULTS (Mozart validation)")
+    for tname in dataset_task_order:
+        tot = total_by_task[tname]
+        if tot == 0:
+            print("{:14s}: n/a".format(tname))
+        else:
+            acc = 100.0 * correct_by_task[tname] / tot
+            print("{:14s}: {:7.2f}% ({}/{})".format(tname, acc, correct_by_task[tname], tot))
+
+    if csr_total > 0:
+        csr_acc = 100.0 * csr_correct / csr_total
+        print("\nCSR-LIKE exact (root+quality+inversion): {:.2f}% ({}/{})".format(csr_acc, csr_correct, csr_total))
+
+
+if __name__ == "__main__":
+    main()

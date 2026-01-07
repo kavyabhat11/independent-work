@@ -1,0 +1,80 @@
+Composer: Haydn
+Analyst: Dmitri Tymoczko and his computer
+Time Signature: 2/2
+
+m1 Bb: I
+m2 I
+m3 I 
+m4 I
+m5 I b2.5 V
+m6 I
+m7 I b2.5 IV6/4
+m8 I 
+m9 I6 b2.5 C: bVI6
+m10 V6/5 b2.5 iv4/3
+m11 V6/5 b2.5 iv4/3
+m12 V6/5 b2.5 iv4/3
+m13 V6/5 b1.5 iv4/3 b2 V6/5 b2.5 iv4/3
+Note: minor third system
+m14 V6/5
+m15 d: Ger6/5
+m16 i6/4
+m17 i6/4
+Note: everything here is gesturally part of the i6/4 (uncontroversial prolongation)  
+m18 i6/4
+m19 i6 b2 i
+m20 VI
+m21 Ger2
+m22 V b2.5 VI6
+m23 V6/5 b2.5 VI6
+m24 = m23
+m25 = m23
+m26 V6/5 b1.5 VI6 b2 V6/5 b2.5 VI6
+Note: minor third system
+m27 V6/5
+m28 e: Ger6/5
+m29-33 = m16-20
+m34 VI b2 F: V7
+m35 I6/4
+m36 I6/4 b2 #vio2
+m37 V7
+m38 e: Ger6/5
+m41 V
+m42 V
+m43 V
+m44 V
+m45 V
+m46 e: i b2 V6/5
+m47 i
+m48 D: ii b2 V7
+m49 I
+m50 a: i6 b2 V6
+m51 i
+m52 G: ii b2 V
+m53 I b2.5 IV
+m54 I6 b2.5 IV
+m55 I6 b2.5 IV
+m56 I6 b2.5 V2
+m57 I6 b1.5 V2 b2 I6 b2.5 V6/5
+m58 I b1.5 V6 b2 I b2.5 V4/3
+m59 V2/IV
+m60 V2/IV b2 V6/5/IV
+m61 a: viio4/3 b2.5 viio6/5
+m62 viio7 b2.5 i b2.75 viio7
+m63 i b1.75 viio7 b2 i b2.75 viio7
+m64 i G: ii b1.5 V6/5 b2.5 I
+m65 I b1.5 IV6 b2.5 V6/5
+m66 I6/4 b1.5 vi b2 ii6 b2.5 V7
+Note: Renaissance seventh-chord suspension idiom!
+m67 vi7 b1.5 IV6 b2.5 I6/4
+m68 I6/4 b1.5 ii6 b2.5 viio7/V
+m69 viio7/V
+m70 viio7/V
+Note: "common tone dominant seventh!"  Here
+m71 V
+m72 V6/5
+m73 V6/5
+m74 V6/5
+m75 V6/5
+m76 V6/5
+m77 V6/5

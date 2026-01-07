@@ -1,33 +1,29 @@
 #!/usr/bin/env python3
 """
-Finetune pretrained ChordGNN on Mozart data (FIXED VERSION)
+Finetune pretrained ChordGNN on Mozart data (robust + checkpoint-truth)
 
-CRITICAL FIXES:
-1. Loads pretrained checkpoint FIRST to detect vocab size
-2. Uses pretrained tasks (not datamodule tasks) to ensure architecture matches
-3. Sets DATA_VERSION automatically based on pretrained romanNumeral vocab
-4. Uses much lower learning rate (1e-5) to prevent catastrophic forgetting
-5. Matches all architecture params (n_layers, n_hidden) from pretrained
-6. Increased early stopping patience for small datasets
+This version fixes the two big silent-footgun issues:
+1) ALWAYS loads the correct W&B artifact checkpoint (model.ckpt). No globbing.
+2) Uses the checkpoint-truth 14 tasks + fixed label column order, not available_representations.
+   (Your dataset returns labels like (T, 15, 1); we squeeze + take first 14 cols.)
 
-What this script does:
-1) Loads pretrained checkpoint to inspect vocab and architecture
-2) Sets DATA_VERSION to match pretrained vocab (31 vs 76 classes)
-3) Rebuilds Mozart TSV cache into the dataset cache directory
-4) Loads datamodule with CORRECT version (but ignores its task definitions)
-5) Builds model using PRETRAINED tasks (ensures exact architecture match)
-6) Loads pretrained weights (encoder + heads all load successfully now)
-7) Sanitizes NaN/Inf in batches
-8) Trains with lower LR, EarlyStopping, ModelCheckpoint
-9) Tests and logs to W&B
+It also:
+- Detects DATA_VERSION from ckpt romanNumeral head (31 -> v2.0.0, 76 -> v1.0.0)
+- Forces n_hidden=256 if ckpt heads imply 256 (yours do)
+- Splits train/val/test by matching graph.name to MOZART_ROOT split filenames
+- Freezes frozen_model by default (set UNFREEZE_LAST_N_ENCODER_PARAMS > 0 to unfreeze a bit)
 
 Run:
-  python finetune_from_checkpoint_FIXED.py
+  export MOZART_ROOT=/path/to/mozart_dataset   # contains training/validation/test/*.tsv
+  wandb login                                  # if needed
+  python finetune_mozart_ckpttruth.py
 """
 
 import os
 import glob
 import shutil
+import math
+from collections import defaultdict
 
 import torch
 import chordgnn as st
@@ -35,658 +31,303 @@ import chordgnn as st
 import wandb
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning import Trainer
-from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
-from pytorch_lightning import Callback
+from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping, Callback
 
 
-print("\n" + "=" * 70)
-print("Mozart Finetuning (FIXED: Vocab-Matched + Lower LR + W&B)")
-print("=" * 70 + "\n")
+# =============================================================================
+# CONFIG
+# =============================================================================
+WANDB_ARTIFACT = "melkisedeath/chord_rec/model-kvd0jic5:v0"
+ARTIFACT_ROOT = "./artifacts"
+
+MOZART_ROOT = os.environ.get("MOZART_ROOT", "./mozart_dataset")
+CACHE_ROOT = os.environ.get("CACHE_ROOT", "/scratch/network/kb9520/chordgnn_data")
+
+LR = float(os.environ.get("LR", "5e-5"))
+WEIGHT_DECAY = float(os.environ.get("WEIGHT_DECAY", "1e-4"))
+MAX_EPOCHS = int(os.environ.get("MAX_EPOCHS", "80"))
+NUM_WORKERS = int(os.environ.get("NUM_WORKERS", "8"))
+
+# IMPORTANT: checkpoint has 14 heads
+NUM_TASKS = 14
+
+WANDB_PROJECT = "chord_rec"
+WANDB_RUN_NAME = os.environ.get("WANDB_RUN_NAME", "mozart-finetune-CKPTTRUTH")
+
+# Exact checkpoint head order you used in baseline
+TASK_ORDER = [
+    "localkey", "tonkey", "degree1", "degree2", "quality", "inversion",
+    "root", "romanNumeral", "hrhythm", "pcset", "bass", "tenor", "alto", "soprano"
+]
+
+# How much of frozen encoder to unfreeze (0 = fully frozen)
+UNFREEZE_LAST_N_ENCODER_PARAMS = int(os.environ.get("UNFREEZE_LAST_N_ENCODER_PARAMS", "0"))
 
 torch.manual_seed(0)
 
-# -------------------------
-# Config
-# -------------------------
-WANDB_ARTIFACT = "melkisedeath/chord_rec/model-kvd0jic5:v0"
-ARTIFACT_ROOT = "./artifacts"
-MOZART_ROOT = os.environ.get("MOZART_ROOT", "./mozart_dataset")  # Can override with env var
 
-CACHE_ROOT = "/scratch/network/kb9520/chordgnn_data"
-CACHE = os.path.join(CACHE_ROOT, "AugmentedNetChordDataset", "dataset")
+# =============================================================================
+# PATCH: old torch can't handle nn.Linear(device=None,dtype=None)
+# (only needed if your env is old; harmless otherwise)
+# =============================================================================
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.nn import init
+from torch.nn.parameter import Parameter
 
-# Learning rate for finetuning pretrained heads
-# CRITICAL: Heads are loaded from pretrained (40-50% accuracy), NOT random!
-# Use MUCH lower LR to preserve pretrained knowledge and gently adapt to Mozart data
-# Too high LR (1e-3) causes catastrophic forgetting - pretrained weights get destroyed
-LR = 5e-5  # Very low to preserve pretrained heads (was 1e-3, too high!)
-WEIGHT_DECAY = 1e-4
+class PatchedLinear(nn.Module):
+    __constants__ = ["in_features", "out_features"]
+    in_features: int
+    out_features: int
+    weight: Parameter
 
-MAX_EPOCHS = 80  # Increased from 40 since lower LR needs more time
-BATCH_SIZE = 4
-NUM_WORKERS = 8
-NUM_TASKS = 11
+    def __init__(self, in_features, out_features, bias=True, device=None, dtype=None):
+        super().__init__()
+        self.in_features = int(in_features)
+        self.out_features = int(out_features)
 
-WANDB_PROJECT = "chord_rec"
-WANDB_RUN_NAME = "mozart-finetune-FIXED"
+        factory_kwargs = {}
+        if device is not None:
+            factory_kwargs["device"] = device
+        if dtype is not None:
+            factory_kwargs["dtype"] = dtype
+
+        self.weight = Parameter(torch.empty((self.out_features, self.in_features), **factory_kwargs))
+        if bias:
+            self.bias = Parameter(torch.empty(self.out_features, **factory_kwargs))
+        else:
+            self.register_parameter("bias", None)
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+        if self.bias is not None:
+            fan_in, _ = init._calculate_fan_in_and_fan_out(self.weight)
+            bound = 1 / math.sqrt(fan_in) if fan_in > 0 else 0
+            init.uniform_(self.bias, -bound, bound)
+
+    def forward(self, input):
+        return F.linear(input, self.weight, self.bias)
+
+nn.Linear = PatchedLinear
 
 
-# -------------------------
-# Step 1: Download pretrained checkpoint if needed
-# -------------------------
-print("=" * 70)
-print("STEP 1: Loading pretrained checkpoint")
-print("=" * 70 + "\n")
+# =============================================================================
+# HELPERS
+# =============================================================================
+def banner(msg: str):
+    print("\n" + "=" * 78)
+    print(msg)
+    print("=" * 78)
 
-# Construct expected local path
-artifact_basename = os.path.basename(WANDB_ARTIFACT)  # "model-kvd0jic5:v0"
-local_artifact_dir = os.path.join(ARTIFACT_ROOT, artifact_basename)
-expected_ckpt_path = os.path.join(local_artifact_dir, "model.ckpt")
+def download_ckpt_wandb() -> str:
+    """
+    Always end up with ./artifacts/model.ckpt that is the artifact's file.
+    No globbing, no accidental picking up local finetune ckpts.
+    """
+    expected = os.path.join(ARTIFACT_ROOT, "model.ckpt")
+    if os.path.exists(expected):
+        print(f"✓ Found local checkpoint: {expected}")
+        return expected
 
-# Check if checkpoint exists locally
-if os.path.exists(expected_ckpt_path):
-    print(f"✓ Found local checkpoint: {expected_ckpt_path}")
-    PRETRAINED_CKPT = expected_ckpt_path
-else:
-    print(f"Checkpoint not found locally at: {expected_ckpt_path}")
     print(f"Downloading from W&B: {WANDB_ARTIFACT}")
-
     api = wandb.Api()
     artifact = api.artifact(WANDB_ARTIFACT, type="model")
     downloaded_dir = artifact.download(root=ARTIFACT_ROOT)
 
-    # Find the .ckpt file in downloaded directory
-    ckpt_files = glob.glob(os.path.join(downloaded_dir, "*.ckpt"))
-    if not ckpt_files:
-        raise FileNotFoundError(f"No .ckpt file found in downloaded artifact: {downloaded_dir}")
+    ckpt_path = os.path.join(downloaded_dir, "model.ckpt")
+    if not os.path.exists(ckpt_path):
+        raise FileNotFoundError(f"Expected model.ckpt at {ckpt_path} (downloaded_dir={downloaded_dir})")
 
-    PRETRAINED_CKPT = ckpt_files[0]
-    print(f"✓ Downloaded to: {PRETRAINED_CKPT}\n")
+    # copy to canonical path for stability
+    os.makedirs(ARTIFACT_ROOT, exist_ok=True)
+    if ckpt_path != expected:
+        shutil.copy(ckpt_path, expected)
+        ckpt_path = expected
 
-# -------------------------
-# Step 2: Inspect pretrained checkpoint to detect vocab
-# -------------------------
-print("=" * 70)
-print("STEP 2: Inspecting pretrained checkpoint to detect vocab")
-print("=" * 70 + "\n")
+    print(f"✓ Downloaded to: {ckpt_path}")
+    return ckpt_path
 
-print(f"Loading checkpoint: {PRETRAINED_CKPT}")
-ckpt = torch.load(PRETRAINED_CKPT, map_location="cpu")
-state_dict = ckpt["state_dict"]
+def infer_task_dims_from_ckpt(state_dict: dict) -> dict:
+    """
+    Uses the final layer weights: frozen_model.classifier.classifier.<task>.layers.1.weight
+    shape = (out_dim, hidden_dim). We only need out_dim.
+    """
+    dims = {}
+    for t in TASK_ORDER:
+        key = f"frozen_model.classifier.classifier.{t}.layers.1.weight"
+        if key in state_dict:
+            dims[t] = int(state_dict[key].shape[0])
+        else:
+            # fallback: try without frozen_model prefix
+            key2 = f"classifier.classifier.{t}.layers.1.weight"
+            if key2 in state_dict:
+                dims[t] = int(state_dict[key2].shape[0])
 
-pretrained_hparams = {}
-if "hyper_parameters" in ckpt and isinstance(ckpt["hyper_parameters"], dict):
-    pretrained_hparams = ckpt["hyper_parameters"]
+    missing = [t for t in TASK_ORDER if t not in dims]
+    if missing:
+        raise RuntimeError(f"Could not infer dims for tasks from ckpt: {missing}")
+    return dims
 
-pretrained_tasks = pretrained_hparams.get("tasks", None)
-if pretrained_tasks is None:
-    raise RuntimeError("Pretrained checkpoint missing 'hyper_parameters.tasks'")
+def infer_head_hidden_from_ckpt(state_dict: dict) -> int:
+    """
+    Head hidden size from layers.0.weight: (hidden_dim, hidden_dim) usually (256,256)
+    """
+    key = "frozen_model.classifier.classifier.romanNumeral.layers.0.weight"
+    if key in state_dict:
+        return int(state_dict[key].shape[0])
+    # fallback
+    for k, v in state_dict.items():
+        if "romanNumeral.layers.0.weight" in k and hasattr(v, "shape"):
+            return int(v.shape[0])
+    return 256
 
-print("\nPretrained model task vocabulary sizes:")
-for task, size in pretrained_tasks.items():
-    marker = " ← CRITICAL!" if task == "romanNumeral" else ""
-    print(f"  {task:15s}: {size}{marker}")
+def strip_state_dict_for_loading(state_dict: dict, keep_frozen_model_prefix: bool) -> dict:
+    cleaned = {}
+    for k, v in state_dict.items():
+        if k.startswith(("train_loss.", "val_loss.", "test_loss.")):
+            continue
+        if keep_frozen_model_prefix:
+            cleaned[k] = v
+        else:
+            # strip "frozen_model." if you're loading into bare ChordPredictionModel
+            nk = k
+            if nk.startswith("frozen_model."):
+                nk = nk[len("frozen_model."):]
+            if nk.startswith("module."):
+                nk = nk[len("module."):]
+            cleaned[nk] = v
+    return cleaned
 
-if "romanNumeral" not in pretrained_tasks:
-    raise RuntimeError("Pretrained checkpoint missing 'romanNumeral' task!")
+def copy_mozart_splits_into_cache(data_version: str):
+    """
+    Writes Mozart TSVs into the dataset cache directory expected by chordgnn datasets.
+    """
+    if data_version == "v1.0.0":
+        dataset_dir = os.path.join(CACHE_ROOT, "AugmentedNetChordDataset", "dataset")
+    else:
+        dataset_dir = os.path.join(CACHE_ROOT, "AugmentedNetLatestChordDataset", "dataset")
 
-rn_vocab_size = pretrained_tasks["romanNumeral"]
-print(f"\n✓ Pretrained uses romanNumeral: {rn_vocab_size} classes")
+    if os.path.exists(dataset_dir):
+        print(f"Cleaning existing dataset cache: {dataset_dir}")
+        shutil.rmtree(dataset_dir)
 
-# Auto-select DATA_VERSION to match pretrained vocab
-if rn_vocab_size == 31:
-    DATA_VERSION = "v2.0.0"  # or any string != "v1.0.0"
-    print(f"  → Setting DATA_VERSION = '{DATA_VERSION}' (Augmented2022ChordGraphDataset)")
-elif rn_vocab_size == 76:
-    DATA_VERSION = "v1.0.0"
-    print(f"  → Setting DATA_VERSION = '{DATA_VERSION}' (AugmentedNetChordGraphDataset)")
-else:
-    raise RuntimeError(f"Unexpected romanNumeral vocab size: {rn_vocab_size}")
+    os.makedirs(os.path.join(dataset_dir, "training"), exist_ok=True)
+    os.makedirs(os.path.join(dataset_dir, "validation"), exist_ok=True)
+    os.makedirs(os.path.join(dataset_dir, "test"), exist_ok=True)
 
-# Extract other pretrained architecture params
-pretrained_n_hidden = int(pretrained_hparams.get("n_hidden", 256))
-pretrained_n_layers = int(pretrained_hparams.get("n_layers", 1))  # default 1, not 2!
-pretrained_in_feats = int(pretrained_hparams.get("in_feats", 83))
-pretrained_dropout = float(pretrained_hparams.get("dropout", 0.5))
-pretrained_use_nade = bool(pretrained_hparams.get("use_nade", False))
-pretrained_use_jk = bool(pretrained_hparams.get("use_jk", False))
-pretrained_use_rotograd = bool(pretrained_hparams.get("use_rotograd", False))
+    for split in ("training", "validation", "test"):
+        for tsv in glob.glob(os.path.join(MOZART_ROOT, split, "*.tsv")):
+            shutil.copy(tsv, os.path.join(dataset_dir, split))
 
-print(f"\nPretrained architecture:")
-print(f"  in_feats:     {pretrained_in_feats}")
-print(f"  n_hidden:     {pretrained_n_hidden}")
-print(f"  n_layers:     {pretrained_n_layers}")
-print(f"  dropout:      {pretrained_dropout}")
-print(f"  use_nade:     {pretrained_use_nade}")
-print(f"  use_jk:       {pretrained_use_jk}")
-print(f"  use_rotograd: {pretrained_use_rotograd}")
-
-print(f"\nPretrained training hyperparameters:")
-print(f"  lr:           {pretrained_hparams.get('lr', 'NOT FOUND')}")
-print(f"  weight_decay: {pretrained_hparams.get('weight_decay', 'NOT FOUND')}")
-print()
-
-
-# -------------------------
-# Step 3: Setup Mozart data with custom raw_dir
-# -------------------------
-print("=" * 70)
-print("STEP 3: Setting up Mozart dataset cache")
-print("=" * 70 + "\n")
-
-# CRITICAL FIX: Use CACHE_ROOT as raw_dir so dataset doesn't download full dataset
-# Copy Mozart TSVs to the location that matches DATA_VERSION
-# For v1.0.0 → AugmentedNetChordDataset
-# For v2.0.0 → AugmentedNetLatestChordDataset
-if DATA_VERSION == "v1.0.0":
-    dataset_dir = os.path.join(CACHE_ROOT, "AugmentedNetChordDataset", "dataset")
-else:
-    dataset_dir = os.path.join(CACHE_ROOT, "AugmentedNetLatestChordDataset", "dataset")
-
-if os.path.exists(dataset_dir):
-    print(f"Cleaning existing dataset cache: {dataset_dir}")
-    shutil.rmtree(dataset_dir)
-
-os.makedirs(os.path.join(dataset_dir, "training"), exist_ok=True)
-os.makedirs(os.path.join(dataset_dir, "validation"), exist_ok=True)
-os.makedirs(os.path.join(dataset_dir, "test"), exist_ok=True)
-
-print(f"Copying Mozart TSVs to: {dataset_dir}")
-# Expect MOZART_ROOT to have training/validation/test subdirectories
-# Use split_mozart_data.py to create this structure first
-for tsv in glob.glob(f"{MOZART_ROOT}/training/*.tsv"):
-    shutil.copy(tsv, os.path.join(dataset_dir, "training"))
-for tsv in glob.glob(f"{MOZART_ROOT}/validation/*.tsv"):
-    shutil.copy(tsv, os.path.join(dataset_dir, "validation"))
-for tsv in glob.glob(f"{MOZART_ROOT}/test/*.tsv"):
-    shutil.copy(tsv, os.path.join(dataset_dir, "test"))
-
-train_ct = len(glob.glob(f"{dataset_dir}/training/*.tsv"))
-val_ct = len(glob.glob(f"{dataset_dir}/validation/*.tsv"))
-test_ct = len(glob.glob(f"{dataset_dir}/test/*.tsv"))
-print(f"✓ Data ready: {train_ct} train, {val_ct} val, {test_ct} test\n")
+    train_ct = len(glob.glob(os.path.join(dataset_dir, "training", "*.tsv")))
+    val_ct = len(glob.glob(os.path.join(dataset_dir, "validation", "*.tsv")))
+    test_ct = len(glob.glob(os.path.join(dataset_dir, "test", "*.tsv")))
+    print(f"✓ Data ready: {train_ct} train, {val_ct} val, {test_ct} test")
+    return dataset_dir, train_ct, val_ct, test_ct
 
 
-# -------------------------
-# Step 4: Load datamodule with custom raw_dir (to prevent full dataset download)
-# -------------------------
-print("=" * 70)
-print("STEP 4: Creating custom Mozart datamodule")
-print("=" * 70 + "\n")
-
-print(f"Creating dataset with version='{DATA_VERSION}' and raw_dir='{CACHE_ROOT}'...")
-
-# CRITICAL FIX: Create dataset directly with raw_dir to avoid downloading full dataset
-if DATA_VERSION == "v1.0.0":
-    dataset = st.data.datasets.chord.AugmentedNetChordGraphDataset(
-        raw_dir=CACHE_ROOT,  # ← This prevents downloading the full dataset!
-        force_reload=True,   # ← Force reprocessing of Mozart TSVs
-        nprocs=max(1, NUM_WORKERS),
-        include_synth=False,
-        num_tasks=NUM_TASKS,
-        collection="all",
-    )
-else:
-    dataset = st.data.datasets.chord.Augmented2022ChordGraphDataset(
-        raw_dir=CACHE_ROOT,  # ← This prevents downloading the full dataset!
-        force_reload=True,   # ← Force reprocessing of Mozart TSVs
-        nprocs=NUM_WORKERS,
-        include_synth=False,
-        num_tasks=NUM_TASKS,
-        collection="all",
-    )
-
-# Create a minimal datamodule wrapper
+# =============================================================================
+# DATA MODULE
+# =============================================================================
 from pytorch_lightning import LightningDataModule
+from torch.utils.data import DataLoader, Subset
 
 class MozartDatamodule(LightningDataModule):
-    def __init__(self, dataset, batch_size, num_workers, version):
-        super().__init__()  # CRITICAL: Call parent __init__
+    def __init__(self, dataset, dataset_dir, num_workers: int):
+        super().__init__()
         self.dataset = dataset
-        self.batch_size = batch_size
+        self.dataset_dir = dataset_dir
         self.num_workers = num_workers
-        self.version = version
-        self.tasks = dataset.tasks
-        self.features = dataset.features
-        self.in_feats = dataset.features.in_feats if hasattr(dataset.features, 'in_feats') else None
 
     def collate_fn(self, batch):
-        """Collate function for all dataloaders (batch_size=1)"""
-        import torch
+        """
+        Returns a single-graph batch compatible with chordgnn Lightning models:
+          (x, edges, edge_type, labels_dict, onset_div, lengths)
+        """
         from chordgnn.utils.hgraph import add_reverse_edges_from_edge_index
 
-        batch_inputs, edges, edge_type, batch_label, onset_div, name = batch[0]
-        batch_inputs = batch_inputs.squeeze(0).float()
-        batch_labels = batch_label.squeeze(0)
-        onset_div = onset_div.squeeze().to(batch_inputs.device)
+        x, edges, edge_type, labels, onset_div, name = batch[0]
 
-        if self.version == "v1.0.0":
-            from chordgnn.utils.chord_representations import available_representations
-        else:
-            from chordgnn.utils.chord_representations_latest import available_representations
-
-        batch_label = {task: batch_labels[:, i].squeeze().long() for i, task in enumerate(available_representations.keys())}
-        batch_label["onset"] = batch_labels[:, -1].squeeze()
+        # squeeze batch dims
+        x = x.squeeze(0).float()
         edges = edges.squeeze(0)
         edge_type = edge_type.squeeze(0)
+        onset_div = onset_div.squeeze()
+
+        # labels: often (T, 15, 1) or (T, 15); we want (T, 14) for TASK_ORDER
+        labels = labels.squeeze(0) if labels.ndim == 4 else labels  # just in case
+        if labels.ndim == 3 and labels.shape[-1] == 1:
+            labels = labels.squeeze(-1)  # (T, num_cols)
+        if labels.ndim != 2 or labels.shape[1] < len(TASK_ORDER):
+            raise RuntimeError(f"Unexpected labels shape in collate_fn: {tuple(labels.shape)} name={name}")
+
+        label_mat = labels[:, :len(TASK_ORDER)]
+        labels_dict = {task: label_mat[:, i].long() for i, task in enumerate(TASK_ORDER)}
+
+        # add reverse edges
         edges, edge_type = add_reverse_edges_from_edge_index(edges, edge_type)
 
-        # Create lengths tensor for training compatibility (batch_size=1)
-        lengths = torch.tensor([batch_labels.shape[0]]).long()
-
-        return batch_inputs, edges, edge_type, batch_label, onset_div, lengths
+        lengths = torch.tensor([label_mat.shape[0]]).long()
+        return x, edges, edge_type, labels_dict, onset_div, lengths
 
     def setup(self, stage=None):
-        # Split dataset into train/val/test based on which subdirectory files came from
-        import glob
-        import os
-
-        all_graphs = [(i, g) for i, g in enumerate(self.dataset.graphs)]
-
-        # Get lists of filenames from each split directory
-        dataset_dir = os.path.join(CACHE_ROOT,
-                                   "AugmentedNetLatestChordDataset" if self.version == "v2.0.0" else "AugmentedNetChordDataset",
-                                   "dataset")
-
+        # build file whitelists from the split folders we created
         train_files = set(os.path.splitext(os.path.basename(f))[0]
-                         for f in glob.glob(f"{dataset_dir}/training/*.tsv"))
+                          for f in glob.glob(os.path.join(self.dataset_dir, "training", "*.tsv")))
         val_files = set(os.path.splitext(os.path.basename(f))[0]
-                       for f in glob.glob(f"{dataset_dir}/validation/*.tsv"))
+                        for f in glob.glob(os.path.join(self.dataset_dir, "validation", "*.tsv")))
         test_files = set(os.path.splitext(os.path.basename(f))[0]
-                        for f in glob.glob(f"{dataset_dir}/test/*.tsv"))
+                         for f in glob.glob(os.path.join(self.dataset_dir, "test", "*.tsv")))
 
-        print(f"\nSplitting {len(all_graphs)} graphs based on source files...")
-        print(f"  Train files: {len(train_files)}")
-        print(f"  Val files: {len(val_files)}")
-        print(f"  Test files: {len(test_files)}")
+        train_idx, val_idx, test_idx = [], [], []
 
-        # Match graph names to file lists
-        train_idx = []
-        val_idx = []
-        test_idx = []
-
-        for i, g in all_graphs:
-            # Graph names might have suffixes like K282-1-1, K282-1-2 for augmented versions
-            # Extract base name (everything before last hyphen if it's a number)
-            base_name = g.name
-            parts = base_name.rsplit('-', 1)
+        # graph.name sometimes has augmentation suffix "-1", "-2" etc.
+        for i, g in enumerate(self.dataset.graphs):
+            base = g.name
+            parts = base.rsplit("-", 1)
             if len(parts) == 2 and parts[1].isdigit():
-                # Check if this is an augmentation suffix
-                maybe_base = parts[0]
-                if maybe_base not in train_files and maybe_base not in val_files and maybe_base not in test_files:
-                    # Not a split, keep full name
-                    pass
-                else:
-                    base_name = maybe_base
+                maybe = parts[0]
+                if maybe in train_files or maybe in val_files or maybe in test_files:
+                    base = maybe
 
-            # Match to split
-            if base_name in train_files:
+            if base in train_files:
                 train_idx.append(i)
-            elif base_name in val_files:
+            elif base in val_files:
                 val_idx.append(i)
-            elif base_name in test_files:
+            elif base in test_files:
                 test_idx.append(i)
 
-        print(f"  → Matched {len(train_idx)} training, {len(val_idx)} validation, {len(test_idx)} test graphs")
-
-        # Sanity check
-        if len(train_idx) == 0 or len(val_idx) == 0 or len(test_idx) == 0:
-            print("  ⚠ ERROR: Split matching failed!")
-            print(f"  Sample graph names: {[g.name for _, g in all_graphs[:5]]}")
-            print(f"  Sample train files: {list(train_files)[:5]}")
-            raise RuntimeError("Failed to match graphs to train/val/test splits!")
-
-        from torch.utils.data import Subset
+        if not train_idx or not val_idx or not test_idx:
+            print("Split matching failed.")
+            print("Example graph names:", [g.name for g in self.dataset.graphs[:10]])
+            print("Example train files:", list(train_files)[:10])
+            raise RuntimeError("Failed to match graphs to train/val/test.")
 
         self.dataset_train = Subset(self.dataset, train_idx)
         self.dataset_val = Subset(self.dataset, val_idx)
         self.dataset_test = Subset(self.dataset, test_idx)
 
+        print(f"✓ Matched graphs: train={len(train_idx)} val={len(val_idx)} test={len(test_idx)}")
+
     def train_dataloader(self):
-        from torch.utils.data import DataLoader
-        return DataLoader(
-            self.dataset_train,
-            batch_size=1,  # Use batch_size=1 for training (simpler, same as val/test)
-            shuffle=True,
-            num_workers=self.num_workers,
-            collate_fn=self.collate_fn
-        )
+        return DataLoader(self.dataset_train, batch_size=1, shuffle=True,
+                          num_workers=self.num_workers, collate_fn=self.collate_fn)
 
     def val_dataloader(self):
-        from torch.utils.data import DataLoader
-        return DataLoader(
-            self.dataset_val,
-            batch_size=1,  # Use batch_size=1 for validation
-            shuffle=False,
-            num_workers=self.num_workers,
-            collate_fn=self.collate_fn
-        )
+        return DataLoader(self.dataset_val, batch_size=1, shuffle=False,
+                          num_workers=self.num_workers, collate_fn=self.collate_fn)
 
     def test_dataloader(self):
-        from torch.utils.data import DataLoader
-        return DataLoader(
-            self.dataset_test,
-            batch_size=1,  # Use batch_size=1 for test
-            shuffle=False,
-            num_workers=self.num_workers,
-            collate_fn=self.collate_fn
-        )
-
-datamodule = MozartDatamodule(dataset, BATCH_SIZE, NUM_WORKERS, DATA_VERSION)
-datamodule.setup()
-
-print(f"✓ Training: {len(datamodule.dataset_train)} samples (with augmentation)")
-print(f"✓ Val: {len(datamodule.dataset_val)} samples")
-print(f"✓ Test: {len(datamodule.dataset_test)} samples")
-
-# Verify datamodule tasks match pretrained
-datamodule_tasks = datamodule.tasks
-print(f"\nDatamodule task vocab sizes:")
-for task, size in datamodule_tasks.items():
-    pretrained_size = pretrained_tasks.get(task, "MISSING")
-    match = "✓" if size == pretrained_size else "✗ MISMATCH!"
-    if pretrained_size == "MISSING":
-        print(f"  {task:15s}: {size:3} (pretrained: {pretrained_size}) {match}")
-    else:
-        print(f"  {task:15s}: {size:3} (pretrained: {pretrained_size:3}) {match}")
-
-# Check for critical mismatches
-mismatches = []
-for task, size in datamodule_tasks.items():
-    if task in pretrained_tasks and size != pretrained_tasks[task]:
-        mismatches.append(f"{task}: datamodule={size}, pretrained={pretrained_tasks[task]}")
-
-if mismatches:
-    print("\n⚠ WARNING: Task vocab mismatches detected:")
-    for mm in mismatches:
-        print(f"  • {mm}")
-    print("\n  → We will use PRETRAINED tasks to build model (ignoring datamodule tasks)")
-else:
-    print("\n✓ All task vocabs match! Safe to use either.")
-
-print()
+        return DataLoader(self.dataset_test, batch_size=1, shuffle=False,
+                          num_workers=self.num_workers, collate_fn=self.collate_fn)
 
 
-# -------------------------
-# Step 5: W&B logger
-# -------------------------
-wandb_logger = WandbLogger(
-    project=WANDB_PROJECT,
-    name=WANDB_RUN_NAME,
-    log_model=True,
-)
-
-
-# -------------------------
-# Step 6: Build model using PRETRAINED tasks
-# -------------------------
-print("=" * 70)
-print("STEP 6: Building model with pretrained architecture")
-print("=" * 70 + "\n")
-
-# CRITICAL FIX: Use pretrained_tasks, NOT datamodule.tasks
-tasks = pretrained_tasks
-
-# Determine in_feats robustly (try pretrained first, then datamodule)
-if "in_feats" in pretrained_hparams:
-    in_feats = int(pretrained_hparams["in_feats"])
-elif hasattr(datamodule, "in_feats"):
-    in_feats = int(datamodule.in_feats)
-elif hasattr(datamodule, "features") and hasattr(datamodule.features, "in_feats"):
-    in_feats = int(datamodule.features.in_feats)
-else:
-    b0 = next(iter(datamodule.train_dataloader()))
-    in_feats = int(b0[0].shape[-1])
-
-# FIXED: Use pretrained params, not defaults
-n_hidden = pretrained_n_hidden
-n_layers = pretrained_n_layers
-dropout = pretrained_dropout
-use_nade = pretrained_use_nade
-use_jk = pretrained_use_jk
-use_rotograd = pretrained_use_rotograd
-
-print("Building model with:")
-print(f"  in_feats:       {in_feats}")
-print(f"  n_hidden:       {n_hidden}")
-print(f"  n_layers:       {n_layers}")
-print(f"  dropout:        {dropout}")
-print(f"  num_tasks:      {len(tasks)}")
-print(f"  lr:             {LR} (50x smaller than before!)")
-print(f"  weight_decay:   {WEIGHT_DECAY}")
-print(f"  use_nade:       {use_nade}")
-print(f"  use_jk:         {use_jk}")
-print(f"  use_rotograd:   {use_rotograd}")
-
-# CRITICAL FIX: Detect if checkpoint uses PostChordPrediction or ChordPrediction
-checkpoint_keys = list(state_dict.keys())
-has_frozen_model = any(k.startswith("frozen_model.") for k in checkpoint_keys)
-
-print(f"\nCheckpoint architecture detection:")
-if has_frozen_model:
-    print(f"  ✓ Detected PostChordPrediction (frozen_model.* keys)")
-    print(f"  → Building PostChordPrediction to match")
-
-    # Build a frozen_model (encoder)
-    from chordgnn.models.chord import ChordPredictionModel
-    frozen_model = ChordPredictionModel(in_feats=in_feats)
-
-    # Build PostChordPrediction
-    model = st.models.chord.PostChordPrediction(
-        in_feats=in_feats,
-        n_hidden=n_hidden,
-        tasks=tasks,  # CRITICAL: Use pretrained tasks!
-        n_layers=n_layers,
-        dropout=dropout,
-        lr=LR,
-        weight_decay=WEIGHT_DECAY,
-        use_nade=use_nade,
-        use_jk=use_jk,
-        use_rotograd=use_rotograd,
-        frozen_model=frozen_model,
-        device="cpu",  # Will be moved to GPU by Trainer if available
-    )
-else:
-    print(f"  ✓ Detected ChordPrediction (encoder.* or module.* keys)")
-    print(f"  → Building ChordPrediction to match")
-
-    model = st.models.chord.ChordPrediction(
-        in_feats=in_feats,
-        n_hidden=n_hidden,
-        tasks=tasks,  # CRITICAL: Use pretrained tasks!
-        n_layers=n_layers,
-        dropout=dropout,
-        lr=LR,
-        weight_decay=WEIGHT_DECAY,
-        use_nade=use_nade,
-        use_jk=use_jk,
-        use_rotograd=use_rotograd,
-        device="cpu",  # Will be moved to GPU by Trainer if available
-    )
-
-print()
-
-
-# -------------------------
-# Step 7: Load pretrained weights
-# -------------------------
-print("=" * 70)
-print("STEP 7: Loading pretrained weights")
-print("=" * 70 + "\n")
-
-print("Attempting to load all pretrained weights...")
-
-# Clean state dict - remove loss parameters
-cleaned_state_dict = {}
-for k, v in state_dict.items():
-    # Skip loss parameters
-    if k.startswith("train_loss.") or k.startswith("val_loss.") or k.startswith("test_loss."):
-        continue
-
-    # For ChordPrediction (not PostChordPrediction), strip 'module.' prefix if present
-    if not has_frozen_model and k.startswith("module."):
-        cleaned_state_dict[k[7:]] = v
-    else:
-        # For PostChordPrediction, keep keys as-is (frozen_model.*)
-        cleaned_state_dict[k] = v
-
-# Load with strict=False to allow missing keys (like optimizer state)
-missing, unexpected = model.load_state_dict(cleaned_state_dict, strict=False)
-
-print(f"\n✓ Pretrained weights loaded")
-print(f"  Loaded tensors:     {len(cleaned_state_dict)}")
-print(f"  Missing keys:       {len(missing)}")
-print(f"  Unexpected keys:    {len(unexpected)}")
-
-# Verify weights actually loaded correctly
-if len(missing) > len(cleaned_state_dict) * 0.5:
-    print("\n⚠ WARNING: More than 50% of model keys are missing!")
-    print("  This suggests the checkpoint architecture doesn't match the model.")
-    print("  First 10 missing keys:")
-    for k in missing[:10]:
-        print(f"    {k}")
-    print("\n  First 10 checkpoint keys:")
-    for k in list(cleaned_state_dict.keys())[:10]:
-        print(f"    {k}")
-    raise RuntimeError("Weight loading failed - architecture mismatch!")
-
-# Check if encoder loaded
-encoder_keys_in_ckpt = [k for k in cleaned_state_dict.keys() if "encoder" in k]
-encoder_keys_in_model = [k for k in model.state_dict().keys() if "encoder" in k]
-encoder_loaded = len([k for k in encoder_keys_in_model if k not in missing]) > 0
-
-if encoder_loaded:
-    print(f"\n✓ Encoder loaded successfully ({len(encoder_keys_in_ckpt)} encoder keys)")
-else:
-    print(f"\n✗ ERROR: Encoder did NOT load!")
-    raise RuntimeError("Encoder failed to load - critical error!")
-
-# CRITICAL: Freeze the frozen_model parameters
-print("\nFreezing frozen_model parameters...")
-for param in model.frozen_model.parameters():
-    param.requires_grad = False
-
-# DEBUG: Print ALL parameter names to understand structure
-print("\n" + "="*70)
-print("DEBUGGING: Inspecting model.frozen_model parameter names")
-print("="*70)
-all_frozen_params = list(model.frozen_model.named_parameters())
-print(f"Total frozen_model parameters: {len(all_frozen_params)}\n")
-
-# Group by prefix to see structure
-from collections import defaultdict
-param_groups = defaultdict(list)
-for name, _ in all_frozen_params:
-    # Get top-level prefix (before first dot)
-    prefix = name.split('.')[0] if '.' in name else name
-    param_groups[prefix].append(name)
-
-print("Parameter groups (by top-level prefix):")
-for prefix, params in sorted(param_groups.items()):
-    print(f"  {prefix}: {len(params)} parameters")
-    # Show first 3 and last 3 in this group
-    if len(params) <= 6:
-        for p in params:
-            print(f"    - {p}")
-    else:
-        for p in params[:3]:
-            print(f"    - {p}")
-        print(f"    ... ({len(params) - 6} more)")
-        for p in params[-3:]:
-            print(f"    - {p}")
-
-print("\n" + "="*70 + "\n")
-
-# OPTIONAL: Unfreeze last few layers for better adaptation
-# Set UNFREEZE_LAST_N_LAYERS to 0 to keep fully frozen (current behavior)
-# Set to 2-3 to allow last layers to adapt to Mozart annotation style
-UNFREEZE_LAST_N_LAYERS = 3  # Unfreeze last 3 layers to adapt to Mozart style
-
-if UNFREEZE_LAST_N_LAYERS > 0:
-    # Get ONLY encoder parameters (not task heads!)
-    # Filter for params with "encoder" or "gnn" in the name
-    all_frozen_params = list(model.frozen_model.named_parameters())
-    encoder_params = [(n, p) for n, p in all_frozen_params
-                     if "encoder" in n.lower() or "gnn" in n.lower() or "graph" in n.lower()]
-
-    if len(encoder_params) == 0:
-        print("⚠ WARNING: No encoder parameters found to unfreeze!")
-        print(f"  Sample param names: {[n for n, _ in all_frozen_params[:5]]}")
-    else:
-        total_encoder_layers = len(encoder_params)
-
-        # Unfreeze the last N encoder layers
-        unfrozen_layers = []
-        for name, param in encoder_params[-UNFREEZE_LAST_N_LAYERS:]:
-            param.requires_grad = True
-            unfrozen_layers.append(name)
-
-        print(f"✓ Unfroze last {UNFREEZE_LAST_N_LAYERS} encoder layers:")
-        for name in unfrozen_layers:
-            print(f"  - {name}")
-        print(f"✓ Remaining {total_encoder_layers - UNFREEZE_LAST_N_LAYERS} encoder layers frozen")
-        print(f"✓ Total frozen_model params: {len(all_frozen_params)} (encoder + heads)")
-else:
-    print("✓ frozen_model is fully frozen (non-trainable)")
-
-# Check if important task heads loaded
-important_heads = ["romanNumeral", "localkey", "tonkey", "pcset", "bass"]
-loaded_heads = []
-missing_heads = []
-
-for head in important_heads:
-    # Check if any model keys for this head are NOT in missing list
-    head_keys_in_model = [k for k in model.state_dict().keys() if head in k]
-    head_keys_loaded = [k for k in head_keys_in_model if k not in missing]
-
-    if head_keys_loaded:
-        loaded_heads.append(head)
-    else:
-        missing_heads.append(head)
-
-if loaded_heads:
-    print(f"✓ Task heads loaded: {', '.join(loaded_heads)}")
-if missing_heads:
-    print(f"⚠ Task heads NOT loaded (random init): {', '.join(missing_heads)}")
-    print(f"  → This is OK if you're adding new tasks, but check if unexpected!")
-
-print()
-
-
-# -------------------------
-# Step 8: Log config to W&B
-# -------------------------
-wandb_logger.experiment.config.update({
-    "dataset": "Mozart",
-    "finetune": True,
-    "pretrained_ckpt": PRETRAINED_CKPT,
-    "pretrained_vocab_size": rn_vocab_size,
-    "data_version": DATA_VERSION,
-    "max_epochs": MAX_EPOCHS,
-    "batch_size": BATCH_SIZE,
-    "num_workers": NUM_WORKERS,
-    "num_tasks": len(tasks),
-    "in_feats": in_feats,
-    "n_hidden": n_hidden,
-    "n_layers": n_layers,
-    "lr": LR,
-    "weight_decay": WEIGHT_DECAY,
-    "precision": 32,
-    "grad_clip": 1.0,
-    "earlystop_patience": 10,
-    "earlystop_min_delta": 1e-4,
-    "nan_sanitize": "all_floats_train_val_test",
-})
-
-
-# -------------------------
-# Step 9: NaN/Inf sanitize callback
-# -------------------------
+# =============================================================================
+# CALLBACK: sanitize NaNs
+# =============================================================================
 class SanitizeBatchNaNs(Callback):
-    """
-    Replace any NaN/Inf in floating tensors inside the batch with 0.0.
-    Runs for TRAIN/VAL/TEST so train_loss/val_loss won't become NaN.
-    """
     def __init__(self, verbose_first_k=5):
         super().__init__()
         self.verbose_first_k = verbose_first_k
@@ -698,12 +339,10 @@ class SanitizeBatchNaNs(Callback):
                 bad = torch.isnan(obj) | torch.isinf(obj)
                 if bad.any():
                     if self._printed < self.verbose_first_k:
-                        n = bad.sum().item()
-                        print(f"[SanitizeBatchNaNs] Fixed {n} NaN/Inf in {path} (shape={tuple(obj.shape)})")
+                        print(f"[SanitizeBatchNaNs] Fixed {int(bad.sum().item())} NaN/Inf in {path} shape={tuple(obj.shape)}")
                         self._printed += 1
                     obj[bad] = 0.0
             return
-
         if isinstance(obj, dict):
             for k, v in obj.items():
                 self._scan_and_fix(v, f"{path}.{k}")
@@ -721,71 +360,226 @@ class SanitizeBatchNaNs(Callback):
         self._scan_and_fix(batch)
 
 
-# -------------------------
-# Step 10: Train with EarlyStopping + checkpointing
-# -------------------------
-checkpoint = ModelCheckpoint(
-    save_top_k=1,
-    monitor="val_loss",
-    mode="min",
-    filename="mozart-finetune-FIXED-{epoch:02d}-{val_loss:.3f}",
-)
+# =============================================================================
+# MAIN
+# =============================================================================
+def main():
+    banner("Mozart Finetuning (checkpoint-truth)")
 
-# FIXED: Increased patience from 5 to 10 for small dataset
-early_stop = EarlyStopping(
-    monitor="val_loss",
-    mode="min",
-    patience=10,    # Increased from 5
-    min_delta=1e-4,
-    verbose=True,
-)
+    # ---- Step 1: ckpt
+    banner("STEP 1: Load pretrained checkpoint (correct)")
+    pretrained_ckpt = download_ckpt_wandb()
+    PRETRAINED_CKPT = pretrained_ckpt
+    # ---- Step 2: inspect ckpt
+    banner("STEP 2: Inspect checkpoint (task dims + version)")
+    ckpt = torch.load(pretrained_ckpt, map_location="cpu")
+    import hashlib
 
-trainer = Trainer(
-    max_epochs=MAX_EPOCHS,
-    accelerator="auto",
-    devices=[0] if torch.cuda.is_available() else None,
-    callbacks=[checkpoint, early_stop, SanitizeBatchNaNs(verbose_first_k=5)],
-    reload_dataloaders_every_n_epochs=5,
-    gradient_clip_val=1.0,
-    precision=32,
-    logger=wandb_logger,
-)
+    def sha256_file(path, chunk=1<<20):
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            while True:
+                b = f.read(chunk)
+                if not b:
+                    break
+                h.update(b)
+        return h.hexdigest()
 
-print("=" * 70)
-print("STEP 11: Starting finetuning on Mozart data")
-print("=" * 70 + "\n")
+    print("\n[CHECKPOINT VERIFY]")
+    print("PRETRAINED_CKPT:", PRETRAINED_CKPT)
+    print("exists:", os.path.exists(PRETRAINED_CKPT), "size_bytes:", os.path.getsize(PRETRAINED_CKPT))
+    print("sha256:", sha256_file(PRETRAINED_CKPT)[:16], "(prefix)")
+    print("ckpt keys:", list(ckpt.keys())[:8])
 
-trainer.fit(model, datamodule)
+    sd = ckpt.get("state_dict", {})
+    print("state_dict tensors:", len(sd))
 
-print("\nBEST CKPT:", checkpoint.best_model_path)
-print("BEST SCORE:", checkpoint.best_model_score)
+    # confirm it's the model artifact, not a lightning finetune ckpt you created
+    has_frozen = any(k.startswith("frozen_model.") for k in sd.keys())
+    has_artifact_heads = any("classifier.classifier.romanNumeral.layers.1.weight" in k for k in sd.keys())
+    print("has frozen_model.*:", has_frozen)
+    print("has romanNumeral head key:", has_artifact_heads)
 
-# Log the best ckpt as a W&B artifact
-if checkpoint.best_model_path and os.path.exists(checkpoint.best_model_path):
-    artifact = wandb.Artifact(
-        name="mozart-finetuned-model-FIXED",
-        type="model",
-        description="ChordGNN finetuned on Mozart (FIXED: vocab matched, lower LR)"
+    # print RN head shape (should be (31,256))
+    rn_key = "frozen_model.classifier.classifier.romanNumeral.layers.1.weight"
+    if rn_key in sd:
+        print("RN head weight shape:", tuple(sd[rn_key].shape))
+    else:
+        # fallback scan
+        for k,v in sd.items():
+            if "romanNumeral.layers.1.weight" in k:
+                print("RN head weight shape (found):", k, tuple(v.shape))
+                break
+
+    state_dict = ckpt.get("state_dict", {})
+    if not state_dict:
+        raise RuntimeError("Checkpoint missing state_dict")
+
+    task_dims = infer_task_dims_from_ckpt(state_dict)
+    rn_vocab = task_dims["romanNumeral"]
+    head_hidden = infer_head_hidden_from_ckpt(state_dict)
+
+    if rn_vocab == 31:
+        data_version = "v2.0.0"
+    elif rn_vocab == 76:
+        data_version = "v1.0.0"
+    else:
+        raise RuntimeError(f"Unexpected romanNumeral vocab in ckpt: {rn_vocab}")
+
+    print("✓ romanNumeral vocab:", rn_vocab)
+    print("✓ inferred head hidden:", head_hidden)
+    print("✓ DATA_VERSION:", data_version)
+    print("✓ task dims:", task_dims)
+
+    # ---- Step 3: cache mozart splits
+    banner("STEP 3: Write Mozart TSV splits into dataset cache")
+    dataset_dir, train_ct, val_ct, test_ct = copy_mozart_splits_into_cache(data_version)
+
+    # ---- Step 4: build dataset
+    banner("STEP 4: Build chordgnn dataset (raw_dir=CACHE_ROOT)")
+    if data_version == "v1.0.0":
+        dataset = st.data.datasets.chord.AugmentedNetChordGraphDataset(
+            raw_dir=CACHE_ROOT,
+            force_reload=True,
+            nprocs=max(1, NUM_WORKERS),
+            include_synth=False,
+            num_tasks=NUM_TASKS,
+            collection="all",
+        )
+    else:
+        dataset = st.data.datasets.chord.Augmented2022ChordGraphDataset(
+            raw_dir=CACHE_ROOT,
+            force_reload=True,
+            nprocs=NUM_WORKERS,
+            include_synth=False,
+            num_tasks=NUM_TASKS,
+            collection="all",
+        )
+    print("✓ dataset graphs:", len(dataset.graphs))
+
+    # ---- Step 5: datamodule
+    banner("STEP 5: Datamodule (split by filename)")
+    datamodule = MozartDatamodule(dataset=dataset, dataset_dir=dataset_dir, num_workers=NUM_WORKERS)
+    datamodule.setup()
+
+    # ---- Step 6: logger
+    wandb_logger = WandbLogger(project=WANDB_PROJECT, name=WANDB_RUN_NAME, log_model=True)
+
+    # ---- Step 7: Build Lightning model (PostChordPrediction, because ckpt has frozen_model.*)
+    banner("STEP 6: Build Lightning model to match ckpt (PostChordPrediction)")
+
+    # in_feats from a batch (robust)
+    b0 = next(iter(datamodule.train_dataloader()))
+    in_feats = int(b0[0].shape[-1])
+    print("✓ in_feats:", in_feats)
+
+    n_hidden = head_hidden  # 256 for your ckpt
+    n_layers = 1            # safe default; ckpt may have more but heads show 256 and your baseline used 1
+    dropout = 0.44          # you saw this in baseline hparams sometimes; safe to keep
+    use_nade = False
+    use_jk = False
+    use_rotograd = False
+
+    # Build a frozen encoder model
+    from chordgnn.models.chord import ChordPredictionModel
+    frozen_model = ChordPredictionModel(in_feats=in_feats)
+
+    model = st.models.chord.PostChordPrediction(
+        in_feats=in_feats,
+        n_hidden=n_hidden,
+        tasks=task_dims,     # IMPORTANT: ints, checkpoint-truth
+        n_layers=n_layers,
+        dropout=dropout,
+        lr=LR,
+        weight_decay=WEIGHT_DECAY,
+        use_nade=use_nade,
+        use_jk=use_jk,
+        use_rotograd=use_rotograd,
+        frozen_model=frozen_model,
+        device="cpu",
     )
-    artifact.add_file(checkpoint.best_model_path)
-    wandb_logger.experiment.log_artifact(artifact)
-    print("✓ Logged W&B artifact: mozart-finetuned-model-FIXED\n")
-else:
-    print("WARNING: No best_model_path found; skipping artifact logging.\n")
+
+    # ---- Step 8: load weights (keep frozen_model.* prefix)
+    banner("STEP 7: Load pretrained weights into Lightning model")
+    cleaned = strip_state_dict_for_loading(state_dict, keep_frozen_model_prefix=True)
+    missing, unexpected = model.load_state_dict(cleaned, strict=False)
+    print("✓ loaded tensors:", len(cleaned))
+    print("  missing:", len(missing))
+    print("  unexpected:", len(unexpected))
+    if missing:
+        print("  missing sample:", missing[:15])
+    if unexpected:
+        print("  unexpected sample:", unexpected[:15])
+
+    # ---- Step 9: freeze frozen_model by default
+    banner("STEP 8: Freeze encoder (optional unfreeze tail)")
+    for p in model.frozen_model.parameters():
+        p.requires_grad = False
+
+    if UNFREEZE_LAST_N_ENCODER_PARAMS > 0:
+        enc_params = [(n, p) for n, p in model.frozen_model.named_parameters()
+                      if ("encoder" in n.lower() or "gnn" in n.lower() or "graph" in n.lower())]
+        if enc_params:
+            for n, p in enc_params[-UNFREEZE_LAST_N_ENCODER_PARAMS:]:
+                p.requires_grad = True
+            print(f"✓ Unfroze last {UNFREEZE_LAST_N_ENCODER_PARAMS} encoder params")
+        else:
+            print("⚠ No encoder params matched for unfreezing; staying fully frozen.")
+    else:
+        print("✓ frozen_model fully frozen")
+
+    # ---- Step 10: callbacks + trainer
+    banner("STEP 9: Train")
+    ckpt_cb = ModelCheckpoint(
+        save_top_k=1,
+        monitor="val_loss",
+        mode="min",
+        filename="mozart-finetune-CKPTTRUTH-{epoch:02d}-{val_loss:.3f}",
+    )
+    es_cb = EarlyStopping(monitor="val_loss", mode="min", patience=10, min_delta=1e-4, verbose=True)
+
+    trainer = Trainer(
+        max_epochs=MAX_EPOCHS,
+        accelerator="auto",
+        devices=[0] if torch.cuda.is_available() else None,
+        callbacks=[ckpt_cb, es_cb, SanitizeBatchNaNs(verbose_first_k=5)],
+        gradient_clip_val=1.0,
+        precision=32,
+        logger=wandb_logger,
+    )
+
+    # log useful config
+    wandb_logger.experiment.config.update({
+        "mozart_root": MOZART_ROOT,
+        "dataset_dir": dataset_dir,
+        "train_ct_files": train_ct,
+        "val_ct_files": val_ct,
+        "test_ct_files": test_ct,
+        "pretrained_ckpt": pretrained_ckpt,
+        "data_version": data_version,
+        "task_dims": task_dims,
+        "task_order": TASK_ORDER,
+        "lr": LR,
+        "weight_decay": WEIGHT_DECAY,
+        "max_epochs": MAX_EPOCHS,
+        "num_workers": NUM_WORKERS,
+        "unfreeze_last_n_encoder_params": UNFREEZE_LAST_N_ENCODER_PARAMS,
+    })
+
+    print("\n[PRE-FIT VALIDATE] (baseline under Lightning metrics)")
+    trainer.validate(model, datamodule=datamodule, verbose=True)
+
+    trainer.fit(model, datamodule)
+
+    print("\nBEST CKPT:", ckpt_cb.best_model_path)
+    print("BEST SCORE:", ckpt_cb.best_model_score)
+
+    banner("STEP 10: Test best ckpt")
+    trainer.test(model, datamodule, ckpt_path=ckpt_cb.best_model_path)
+
+    wandb.finish()
+    banner("DONE")
 
 
-# -------------------------
-# Step 12: Test best checkpoint
-# -------------------------
-print("\n" + "=" * 70)
-print("STEP 12: Testing best checkpoint")
-print("=" * 70 + "\n")
-
-trainer.test(model, datamodule, ckpt_path=checkpoint.best_model_path)
-
-print("\n" + "=" * 70)
-print("✓ COMPLETE!")
-print(f"Finetuned model: {checkpoint.best_model_path}")
-print("=" * 70 + "\n")
-
-wandb.finish()
+if __name__ == "__main__":
+    main()

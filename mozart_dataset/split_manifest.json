@@ -1,0 +1,247 @@
+{
+  "training": {
+    "works": [
+      "K279",
+      "K280",
+      "K281",
+      "K283",
+      "K284",
+      "K330",
+      "K331",
+      "K333",
+      "K457",
+      "K570",
+      "op002no1",
+      "op027no1",
+      "op027no2",
+      "op028",
+      "op031no1",
+      "op031no2",
+      "op031no3",
+      "op049no2",
+      "op053",
+      "op74n1",
+      "op74n3",
+      "sym100aDEV",
+      "sym100aRECAP",
+      "sym100bFIRST",
+      "sym100bSECOND",
+      "sym100c",
+      "sym100dFIRST",
+      "sym100dSECOND",
+      "sym100dTHIRD"
+    ],
+    "files_by_work": {
+      "K279": [
+        "K279-1.tsv",
+        "K279-2.tsv",
+        "K279-3.tsv"
+      ],
+      "K280": [
+        "K280-1.tsv",
+        "K280-2.tsv",
+        "K280-3.tsv"
+      ],
+      "K281": [
+        "K281-1.tsv",
+        "K281-2.tsv",
+        "K281-3.tsv"
+      ],
+      "K283": [
+        "K283-1.tsv",
+        "K283-2.tsv",
+        "K283-3.tsv"
+      ],
+      "K284": [
+        "K284-1.tsv",
+        "K284-2.tsv",
+        "K284-3.tsv"
+      ],
+      "K330": [
+        "K330-1.tsv",
+        "K330-2.tsv",
+        "K330-3.tsv"
+      ],
+      "K331": [
+        "K331-1.tsv",
+        "K331-2.tsv",
+        "K331-3.tsv"
+      ],
+      "K333": [
+        "K333-1.tsv",
+        "K333-2.tsv",
+        "K333-3.tsv"
+      ],
+      "K457": [
+        "K457-1.tsv",
+        "K457-2.tsv",
+        "K457-3.tsv"
+      ],
+      "K570": [
+        "K570-1.tsv",
+        "K570-2.tsv",
+        "K570-3.tsv"
+      ],
+      "op002no1": [
+        "op002no1-1.tsv",
+        "op002no1-2.tsv",
+        "op002no1-3.tsv",
+        "op002no1-4.tsv"
+      ],
+      "op027no1": [
+        "op027no1-1.tsv",
+        "op027no1-2.tsv",
+        "op027no1-3.tsv",
+        "op027no1-4.tsv"
+      ],
+      "op027no2": [
+        "op027no2-1.tsv",
+        "op027no2-2.tsv",
+        "op027no2-3.tsv"
+      ],
+      "op028": [
+        "op028-1.tsv",
+        "op028-2.tsv",
+        "op028-3.tsv",
+        "op028-4.tsv"
+      ],
+      "op031no1": [
+        "op031no1-1.tsv",
+        "op031no1-2.tsv",
+        "op031no1-3.tsv"
+      ],
+      "op031no2": [
+        "op031no2-1.tsv",
+        "op031no2-2.tsv",
+        "op031no2-3.tsv"
+      ],
+      "op031no3": [
+        "op031no3-1.tsv",
+        "op031no3-2.tsv",
+        "op031no3-3.tsv",
+        "op031no3-4.tsv"
+      ],
+      "op049no2": [
+        "op049no2-1.tsv",
+        "op049no2-2.tsv"
+      ],
+      "op053": [
+        "op053-1.tsv",
+        "op053-2.tsv",
+        "op053-3.tsv"
+      ],
+      "op74n1": [
+        "op74n1-01.tsv",
+        "op74n1-02.tsv",
+        "op74n1-03.tsv",
+        "op74n1-04.tsv"
+      ],
+      "op74n3": [
+        "op74n3-01.tsv",
+        "op74n3-02.tsv",
+        "op74n3-03.tsv",
+        "op74n3-04.tsv"
+      ],
+      "sym100aDEV": [
+        "sym100aDEV.tsv"
+      ],
+      "sym100aRECAP": [
+        "sym100aRECAP.tsv"
+      ],
+      "sym100bFIRST": [
+        "sym100bFIRST.tsv"
+      ],
+      "sym100bSECOND": [
+        "sym100bSECOND.tsv"
+      ],
+      "sym100c": [
+        "sym100c.tsv"
+      ],
+      "sym100dFIRST": [
+        "sym100dFIRST.tsv"
+      ],
+      "sym100dSECOND": [
+        "sym100dSECOND.tsv"
+      ],
+      "sym100dTHIRD": [
+        "sym100dTHIRD.tsv"
+      ]
+    },
+    "total_files": 76,
+    "total_works": 29
+  },
+  "validation": {
+    "works": [
+      "K282",
+      "K310",
+      "K332",
+      "op026",
+      "op049no1"
+    ],
+    "files_by_work": {
+      "K282": [
+        "K282-1.tsv",
+        "K282-2.tsv",
+        "K282-3.tsv"
+      ],
+      "K310": [
+        "K310-1.tsv",
+        "K310-2.tsv",
+        "K310-3.tsv"
+      ],
+      "K332": [
+        "K332-1.tsv",
+        "K332-2.tsv",
+        "K332-3.tsv"
+      ],
+      "op026": [
+        "op026-1.tsv",
+        "op026-2.tsv",
+        "op026-3.tsv",
+        "op026-4.tsv"
+      ],
+      "op049no1": [
+        "op049no1-1.tsv",
+        "op049no1-2.tsv"
+      ]
+    },
+    "total_files": 15,
+    "total_works": 5
+  },
+  "test": {
+    "works": [
+      "K309",
+      "K311",
+      "K545",
+      "K576",
+      "sym100aEXPO"
+    ],
+    "files_by_work": {
+      "K309": [
+        "K309-1.tsv",
+        "K309-2.tsv",
+        "K309-3.tsv"
+      ],
+      "K311": [
+        "K311-1.tsv",
+        "K311-2.tsv",
+        "K311-3.tsv"
+      ],
+      "K545": [
+        "K545-1.tsv",
+        "K545-2.tsv",
+        "K545-3.tsv"
+      ],
+      "K576": [
+        "K576-1.tsv",
+        "K576-2.tsv",
+        "K576-3.tsv"
+      ],
+      "sym100aEXPO": [
+        "sym100aEXPO.tsv"
+      ]
+    },
+    "total_files": 13,
+    "total_works": 5
+  }
+}

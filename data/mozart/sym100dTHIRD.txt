@@ -1,0 +1,101 @@
+Composer: Haydn
+Analyst: Dmitri Tymoczko and his computer
+Time Signature: 6/8
+
+m1 b2.66 G: V
+m2 I
+m3 V7 b2.66 V6/5
+m4 I b1.66 V6/5/ii b2 ii b2.66 ii6
+m5 I6/4 b2 V
+m6 I
+m7 V7 b2.66 V6/5
+m8 I b1.66 vi b2.33 ii6 b2.66 V
+m9 I
+m10 I
+m11 V6/5 b2 I
+m12 V2 b2 I6
+m13 V6/5 b2 I
+m14 V2 b2 I6
+m15 IV
+m17 viio
+m18 I b2 i
+m19 iio6
+m20 iio6 b2 c: VI
+m21 V6
+m22 V6 b2 VI6
+m23 V6
+m24 V6 b2 VI6 Eb: IV6
+m25 V6/5
+m26 I b2 ii6
+m27 I6/4
+m28 V7
+m29 I
+m30 V7
+m31 I
+m32 V7
+m33 I
+m34 V7/ii
+m35 ii
+m36 V7
+m37 I
+m38 I
+m39 vi b2 IV
+m40 ii b2 viio
+m41 c: viio7
+m42 V6
+m43 i
+m44 G: viio7/V
+m45 V
+m46 V4/3/V
+m47 V6/5
+m48 V6/5
+m49 I
+m50 V4/3
+m51 I
+m52 V4/3
+m53 I
+m54 IV
+m55 I6/4
+m56 V7
+m57 I
+m58 V4/3
+m59 I
+m60 V4/3
+m61 I
+m64 ii6/5
+m65 V6/5/V
+m66 i6/4
+m67 V6/5/VI
+m68 VI b2 VI+
+m69 iv6 b2 Ger6/5
+m70 G: I6/4
+m71 V7
+m72 I
+Pedal: D m73 m78
+m73 V7
+m74 I
+m75 V7
+m76 V4/3/V
+m78 V6/5
+m80 V6/5
+m88-95 = m2-9
+m96 I6
+m97 V7
+m98 I
+m99 V7
+m100 I6
+m101 V7
+m102 I
+m103 IV
+m104 I6/4
+m105 I6/4 b2 V7
+m106 I6
+m107 IV
+m108 I6/4
+m109 I6/4 b2 V7
+m110 I
+m111 V7
+m112 I
+m113 V7
+m114 I
+m118 I

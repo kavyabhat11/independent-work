@@ -1,0 +1,131 @@
+Composer: Haydn
+Analyst: Dmitri Tymoczko and his computer
+Time Signature: 2/2
+
+m1 G: I
+m2 V7 b2 I b2.5 I6
+m3 V2 b1.5 I6 b2.5 V7
+m4 I
+m5 I
+m6 V7 b2 I b2.5 D: V4/3
+m7 I6 b2 V7
+m8 I
+m9 a: viio7 b1.5 V6/5 b2 i
+m10 G: viio7 b1.5 V6/5 b2 I b2.9375 I6
+m11 V2 b1.5 I6 b2 V2 b2.5 I6
+m12 vii/o7 b2.5 I
+m13 ii6 b2 V7
+m14 i b1.5 i6 b2 VI b2.5 VI6
+m15 ii/o6/5 b2 c: V4/3
+m16 i6 b1.5 i
+m17 Eb: V2 b2 I6
+m18 G: Ger6/5 
+m19 V b2 viio7/V
+m20 V b2 viio7/V
+m21 V
+m22 V
+m23 V
+m24 I b2 IV6/4
+m25 I b2.75 I6
+m26 V b1.5 V2 b2 I6 b2.5 I
+m27 V b1.5 V2 b2 I6 b2.5 I
+m28 viio b2 I
+m29 V b2.5 I
+m30 V7 b2.5 I
+m31 V
+m32 I b2 IV6/4
+m33 I b2.75 I6
+Note: was viio6/4 (literally) before, now V2
+m34 V b1.5 V2 b2 I6 b2.5 I
+m35 V b1.5 V2 b2 I6 b2.5 I
+m36 IV6 b2 I6/4
+m37 IV b2 I6
+m38 I6/4 b2 V7
+m39 I
+m40 V7
+m41 I
+m42 vi7 b2 viio
+m43 I
+m44 IV6/4 b2 viio
+m45 I
+m46 IV6/4 b2 viio
+m47 I
+m48 IV6/4 b2 viio
+m49 I b2.5 V2
+m50 I b2.5 V2
+m51 I b2.5 V2
+m52 I b2.5 e: V7
+m53 i b2.5 V7
+m54 i b2.5 V7
+m55 i b2.5 D: V7
+m56 I b2.5 V7
+m57 I b2.5 V7
+m58 I b2 vi
+m59 vi b2 IV
+m60 IV b2 ii
+m61 ii b2 viio
+m62 V
+m63 viio/V
+m64 V
+m65 V2 b1.5 I6 b2 V4/3 b2.5 I
+m66 V6
+m67 V2 b1.5 I6 b2 V4/3 b2.5 I
+m68 V
+m69 V7 b1.5 I6/4 b2 V7 b2.5 I6/4
+m70 V7 
+m71 V7
+m72 V7
+m73 V7
+m74 V7
+Form: second theme
+m75 I b2 IV6/4
+m76 I b2.75 I6
+m77 V b1.5 V2 b2 I6 b2.5 I
+m78 V b1.5 V2 b2 I6 b2.5 I
+m79 IV6 b2 I6/4
+m80 IV b2 V
+m81 I6 b2.5 vi
+m82 IV b2.5 V2
+m83 I6 b1.5 V2 b2 I6 b2.5 V2
+m84 I6 b1.5 V2 b2 I6 b2.5 V2
+m85 I6 b1.5 V2 b2 I6 b2.5 ii6
+m86 I6/4 b2 V7
+m87 d: i b2 VI6
+m88 V2/V b2 V6 b2.5 viio4/3/iv
+m89 V6/VII b1.5 viio4/3/III b2 III6 b2.5 VI
+m90 iio6 b1.5 V b2 i6 b2.5 V6/5/iv
+m91 iv b1.5 V4/3/iv b2 iv6 b2.5 i6/4
+m92 ii/o6/5 b2 V7
+m93 D: I
+m94 I
+m95 I b2.5 V7
+m96 I
+m97 I b2.5 IV6/4
+m98 I
+m99 I b2.5 V7
+m100 I
+m101 V7/v
+m102 V ||
+Note: V-IV across phrase break
+m103 IV
+m104 IV
+m105 ii b1.75 V6/ii b2 ii b2.75 V6/ii
+m106 ii b1.5 V6/5 b2 I b2.5 I6
+m107 ii6 b2 V7
+m108 I
+m109 I6 b2 I
+m110 I b1.5 I6/4 b2 I
+m111 I6 b2 I6/4
+m112 I b1.5 I6 b2 I b2.5 I6/4
+m113 I6 b1.5 I6/4 b2 I6 b2.5 I
+m114 ii6 b2 V7
+m115 I b1.5 I6 b1.75 I b2 V7 b2.5 V6/5 b2.75 V7
+m116 I b1.5 I6 b1.75 I b2 ii6
+m117 I6/4 b2 V7
+m118 I b2 vii/o6/5
+m119 V6/5/IV b2 IV
+m120 I6/4 b1.5 vi b2 ii6 b2.5 V
+m121 I b2 V7
+m122 I b2 V7
+m123 I b2 V7
+m124 I
