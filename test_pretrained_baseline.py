@@ -120,48 +120,38 @@ print(f"Architecture: n_hidden={pretrained_n_hidden}, n_layers={pretrained_n_lay
 checkpoint_keys = list(state_dict.keys())
 has_frozen_model = any(k.startswith("frozen_model.") for k in checkpoint_keys)
 
-if has_frozen_model:
-    print("Using PostChordPrediction architecture")
-    model = st.models.PostChordPrediction(
-        tasks=pretrained_tasks,
-        in_feats=in_feats,
-        n_hidden=pretrained_n_hidden,
-        n_layers=pretrained_n_layers,
-        dropout=pretrained_dropout,
-        use_nade=pretrained_use_nade,
-        use_jk=pretrained_use_jk,
-        use_rotograd=pretrained_use_rotograd,
-        lr=1e-3,
-        weight_decay=1e-4,
-        device="cpu",
-    )
-else:
-    print("Using ChordPrediction architecture")
-    model = st.models.ChordPrediction(
-        tasks=pretrained_tasks,
-        in_feats=in_feats,
-        n_hidden=pretrained_n_hidden,
-        n_layers=pretrained_n_layers,
-        dropout=pretrained_dropout,
-        use_nade=pretrained_use_nade,
-        use_jk=pretrained_use_jk,
-        use_rotograd=pretrained_use_rotograd,
-        lr=1e-3,
-        weight_decay=1e-4,
-    )
+# Always use ChordPredictionModel (the only model class available)
+print("Using ChordPredictionModel architecture")
+model = st.models.ChordPredictionModel(
+    tasks=pretrained_tasks,
+    in_feats=in_feats,
+    n_hidden=pretrained_n_hidden,
+    n_layers=pretrained_n_layers,
+    dropout=pretrained_dropout,
+    use_nade=pretrained_use_nade,
+    use_jk=pretrained_use_jk,
+    use_rotograd=pretrained_use_rotograd,
+    lr=1e-3,
+    weight_decay=1e-4,
+)
 
-# Load weights
+# Load weights - strip "frozen_model." prefix if present
 cleaned_state_dict = {}
 for k, v in state_dict.items():
     if k.startswith("train_loss.") or k.startswith("val_loss.") or k.startswith("test_loss."):
         continue
-    if not has_frozen_model and k.startswith("module."):
-        cleaned_state_dict[k[7:]] = v
-    else:
-        cleaned_state_dict[k] = v
 
-model.load_state_dict(cleaned_state_dict, strict=False)
-print("✓ Model loaded\n")
+    # Strip prefixes
+    clean_key = k
+    if clean_key.startswith("frozen_model."):
+        clean_key = clean_key[13:]  # Remove "frozen_model."
+    if clean_key.startswith("module."):
+        clean_key = clean_key[7:]  # Remove "module."
+
+    cleaned_state_dict[clean_key] = v
+
+missing, unexpected = model.load_state_dict(cleaned_state_dict, strict=False)
+print(f"✓ Model loaded ({len(cleaned_state_dict)} weights, {len(missing)} missing, {len(unexpected)} unexpected)\n")
 
 # Step 6: Run evaluation
 print("="*70)
@@ -202,10 +192,8 @@ with torch.no_grad():
         from chordgnn.utils.hgraph import add_reverse_edges_from_edge_index
         edges, edge_type = add_reverse_edges_from_edge_index(edges, edge_type)
 
-        if has_frozen_model:
-            preds = model.frozen_model(batch_inputs, edges, edge_type, onset_div)
-        else:
-            preds = model(batch_inputs, edges, edge_type, onset_div)
+        # Call model directly
+        preds = model(batch_inputs, edges, edge_type, onset_div)
 
         # Compute accuracy for each task
         for task_name, pred in preds.items():
