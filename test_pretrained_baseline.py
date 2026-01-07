@@ -295,8 +295,15 @@ def main():
         print("  [{}] {}".format(i, task))
 
     banner("Step 5: Load model from checkpoint")
+    # Debug: show first 5 keys
+    print("First 5 checkpoint keys:")
+    for k in list(state_dict.keys())[:5]:
+        print("  {}".format(k))
+
     # Determine if this is a finetuned (PostChordPrediction) or base model
     is_finetuned = any(k.startswith("frozen_model.") for k in state_dict.keys())
+    print("Has 'frozen_model.' prefix: {}".format(is_finetuned))
+    print("MODEL_TYPE env var: {}".format(MODEL_TYPE))
 
     if is_finetuned or MODEL_TYPE == "post":
         print("Detected finetuned model (PostChordPrediction)")
