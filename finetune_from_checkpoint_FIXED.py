@@ -11,7 +11,8 @@ It also:
 - Detects DATA_VERSION from ckpt romanNumeral head (31 -> v2.0.0, 76 -> v1.0.0)
 - Forces n_hidden=256 if ckpt heads imply 256 (yours do)
 - Splits train/val/test by matching graph.name to MOZART_ROOT split filenames
-- Freezes frozen_model by default (set UNFREEZE_LAST_N_ENCODER_PARAMS > 0 to unfreeze a bit)
+- Freezes frozen_model by default, then unfreezes last 2 GCN layers + GRU/projections
+  (set UNFREEZE_LAST_N_GCN_LAYERS=0 to freeze all encoder layers)
 
 Run:
   export MOZART_ROOT=/path/to/mozart_dataset   # contains training/validation/test/*.tsv
@@ -60,8 +61,10 @@ TASK_ORDER = [
     "root", "romanNumeral", "hrhythm", "pcset", "bass", "tenor", "alto", "soprano"
 ]
 
-# How much of frozen encoder to unfreeze (0 = fully frozen)
-UNFREEZE_LAST_N_ENCODER_PARAMS = int(os.environ.get("UNFREEZE_LAST_N_ENCODER_PARAMS", "0"))
+# How many GCN layers to unfreeze from the end (0 = fully frozen, 2 = last 2 GCN layers)
+UNFREEZE_LAST_N_GCN_LAYERS = int(os.environ.get("UNFREEZE_LAST_N_GCN_LAYERS", "2"))
+# Also unfreeze GRU and final projection layers
+UNFREEZE_GRU = os.environ.get("UNFREEZE_GRU", "True").lower() == "true"
 
 torch.manual_seed(0)
 
@@ -511,22 +514,82 @@ def main():
     if unexpected:
         print("  unexpected sample:", unexpected[:15])
 
-    # ---- Step 9: freeze frozen_model by default
-    banner("STEP 8: Freeze encoder (optional unfreeze tail)")
+    # ---- Step 9: freeze frozen_model by default, then selectively unfreeze
+    banner("STEP 8: Freeze encoder (then unfreeze last layers)")
+
+    # First, freeze everything
     for p in model.frozen_model.parameters():
         p.requires_grad = False
+    print("✓ frozen_model fully frozen")
 
-    if UNFREEZE_LAST_N_ENCODER_PARAMS > 0:
-        enc_params = [(n, p) for n, p in model.frozen_model.named_parameters()
-                      if ("encoder" in n.lower() or "gnn" in n.lower() or "graph" in n.lower())]
-        if enc_params:
-            for n, p in enc_params[-UNFREEZE_LAST_N_ENCODER_PARAMS:]:
-                p.requires_grad = True
-            print(f"✓ Unfroze last {UNFREEZE_LAST_N_ENCODER_PARAMS} encoder params")
+    unfrozen_parts = []
+
+    # Unfreeze last N GCN layers if requested
+    if UNFREEZE_LAST_N_GCN_LAYERS > 0:
+        # ChordEncoder has: encoder (HGCN with self.layers ModuleList)
+        if hasattr(model.frozen_model, 'encoder') and hasattr(model.frozen_model.encoder, 'encoder'):
+            gcn = model.frozen_model.encoder.encoder  # HGCN instance
+            if hasattr(gcn, 'layers'):
+                n_total_layers = len(gcn.layers)
+                n_to_unfreeze = min(UNFREEZE_LAST_N_GCN_LAYERS, n_total_layers)
+
+                for layer in gcn.layers[-n_to_unfreeze:]:
+                    for p in layer.parameters():
+                        p.requires_grad = True
+
+                unfrozen_parts.append(f"last {n_to_unfreeze}/{n_total_layers} GCN layers")
+                print(f"✓ Unfroze last {n_to_unfreeze} GCN layers (out of {n_total_layers} total)")
+            else:
+                print("⚠ Could not find GCN layers to unfreeze")
         else:
-            print("⚠ No encoder params matched for unfreezing; staying fully frozen.")
+            print("⚠ Could not find encoder to unfreeze GCN layers")
+
+    # Unfreeze GRU and final projection layers if requested
+    if UNFREEZE_GRU:
+        encoder = model.frozen_model.encoder
+        parts_unfrozen = []
+
+        # Unfreeze GRU
+        if hasattr(encoder, 'gru'):
+            for p in encoder.gru.parameters():
+                p.requires_grad = True
+            parts_unfrozen.append("GRU")
+
+        # Unfreeze final projection layers
+        if hasattr(encoder, 'proj1'):
+            for p in encoder.proj1.parameters():
+                p.requires_grad = True
+            parts_unfrozen.append("proj1")
+
+        if hasattr(encoder, 'proj2'):
+            for p in encoder.proj2.parameters():
+                p.requires_grad = True
+            parts_unfrozen.append("proj2")
+
+        # Unfreeze layer norms
+        if hasattr(encoder, 'layernorm1'):
+            for p in encoder.layernorm1.parameters():
+                p.requires_grad = True
+        if hasattr(encoder, 'layernorm2'):
+            for p in encoder.layernorm2.parameters():
+                p.requires_grad = True
+        if hasattr(encoder, 'layernormgru'):
+            for p in encoder.layernormgru.parameters():
+                p.requires_grad = True
+
+        if parts_unfrozen:
+            unfrozen_parts.append(", ".join(parts_unfrozen))
+            print(f"✓ Unfroze GRU and projection layers: {', '.join(parts_unfrozen)}")
+
+    if not unfrozen_parts:
+        print("✓ All encoder layers remain frozen (only training task heads)")
     else:
-        print("✓ frozen_model fully frozen")
+        print(f"✓ Unfrozen: {' + '.join(unfrozen_parts)}")
+
+    # Print trainable parameter count
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    total_params = sum(p.numel() for p in model.parameters())
+    print(f"✓ Trainable params: {trainable_params:,} / {total_params:,} ({100*trainable_params/total_params:.1f}%)")
 
     # ---- Step 10: callbacks + trainer
     banner("STEP 9: Train")
@@ -563,7 +626,8 @@ def main():
         "weight_decay": WEIGHT_DECAY,
         "max_epochs": MAX_EPOCHS,
         "num_workers": NUM_WORKERS,
-        "unfreeze_last_n_encoder_params": UNFREEZE_LAST_N_ENCODER_PARAMS,
+        "unfreeze_last_n_gcn_layers": UNFREEZE_LAST_N_GCN_LAYERS,
+        "unfreeze_gru": UNFREEZE_GRU,
     })
 
     print("\n[PRE-FIT VALIDATE] (baseline under Lightning metrics)")
