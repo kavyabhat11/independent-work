@@ -151,6 +151,33 @@ def align_target_to_pred_length(target: torch.Tensor, pred_len: int, onset_idx: 
     return torch.cat([target, pad], dim=0)
 
 
+def acc_compute_time_step(acc_onset_level, onset_times):
+    """
+    Convert onset-level accuracy to time-step accuracy.
+    Divides time into 0.125 (1/32 note) segments and replicates each onset's accuracy.
+    Returns the mean accuracy weighted by duration.
+    """
+    import pandas as pd
+    import copy
+
+    if len(acc_onset_level) == 0 or len(onset_times) == 0:
+        return 0.0
+
+    df = pd.DataFrame({"onset": onset_times, "acc": acc_onset_level})
+    dfout = copy.deepcopy(df)
+    dfout["onset"] = dfout["onset"] - dfout["onset"].min()
+
+    for i in range(1, len(df)):
+        onset_diff = int((df["onset"][i] - df["onset"][i - 1]) / 0.125) - 1
+        row = df.iloc[i - 1]
+        for j in range(onset_diff):
+            row["onset"] = row["onset"] + 0.125
+            dfout = dfout.append(row, ignore_index=True)
+
+    dfout.sort_values(by="onset", inplace=True)
+    return dfout["acc"].to_numpy().mean()
+
+
 def copy_all_test_tsvs_into_cache(mozart_root: str, cache_root: str, data_version: str) -> int:
     """Copy TEST TSVs (not validation) into the cache directory."""
     if data_version == "v2.0.0":
@@ -338,8 +365,9 @@ def main():
     total_by_task = defaultdict(int)
 
     # CSR (Chord Symbol Recognition): root + quality + inversion all correct
-    csr_correct = 0
-    csr_total = 0
+    # Need to track onset-level accuracy and onset times for time-step conversion
+    csr_onset_acc_all = []  # List of numpy arrays (one per graph)
+    csr_onset_times_all = []  # List of numpy arrays (one per graph)
 
     # RNalt: romanNumeral + localkey + inversion all correct
     rnalt_correct = 0
@@ -390,6 +418,7 @@ def main():
                 total_by_task[tname] += tot
 
             # Compute CSR (root + quality + inversion)
+            # Store onset-level accuracy for time-step conversion
             if all(k in preds for k in ("root", "quality", "inversion")) and \
                all(k in TASK_ORDER for k in ("root", "quality", "inversion")):
                 r_pred = preds["root"].argmax(dim=-1)
@@ -401,11 +430,25 @@ def main():
                 i_t = align_target_to_pred_length(labels[:, TASK_ORDER.index("inversion")].long().to(device), i_pred.shape[0], onset_idx)
 
                 mask = (r_t >= 0) & (q_t >= 0) & (i_t >= 0)
-                tot = int(mask.sum().item())
-                if tot > 0:
-                    corr = int(((r_pred == r_t) & (q_pred == q_t) & (i_pred == i_t) & mask).sum().item())
-                    csr_correct += corr
-                    csr_total += tot
+                # Per-onset accuracy (1.0 if correct, 0.0 if wrong)
+                csr_onset_acc = ((r_pred == r_t) & (q_pred == q_t) & (i_pred == i_t) & mask).float()
+
+                # Need onset times - extract from labels if available
+                if len(labels.shape) > 1 and labels.shape[1] > 14:
+                    # labels has onset column (15th column)
+                    onset_times_raw = labels[:, 14].cpu().numpy()
+                    # Align to pred length
+                    if onset_idx is not None:
+                        onset_idx_flat = onset_idx.view(-1).long().cpu().numpy()
+                        if len(onset_idx_flat) == len(csr_onset_acc):
+                            onset_times = onset_times_raw[onset_idx_flat]
+                        else:
+                            onset_times = onset_times_raw[:len(csr_onset_acc)]
+                    else:
+                        onset_times = onset_times_raw[:len(csr_onset_acc)]
+
+                    csr_onset_acc_all.append(csr_onset_acc.cpu().numpy())
+                    csr_onset_times_all.append(onset_times)
 
             # Compute RNalt (romanNumeral + localkey + inversion) - only if romanNumeral exists
             if all(k in preds for k in ("romanNumeral", "localkey", "inversion")) and \
@@ -464,10 +507,21 @@ def main():
             print("{:14s}: {:7.2f}% ({}/{})".format(tname, acc, correct_by_task[tname], tot))
 
     print("\nComposite metrics:")
-    if csr_total > 0:
-        csr_acc = 100.0 * csr_correct / csr_total
-        print("CSR (root+quality+inversion):              {:.2f}% ({}/{})".format(csr_acc, csr_correct, csr_total))
+    if len(csr_onset_acc_all) > 0 and len(csr_onset_times_all) > 0:
+        # Concatenate all onset accuracies and times
+        import numpy as np
+        all_csr_acc = np.concatenate(csr_onset_acc_all)
+        all_csr_times = np.concatenate(csr_onset_times_all)
+
+        # Compute time-weighted CSR (divides into 1/32 note segments)
+        csr_time_weighted = acc_compute_time_step(all_csr_acc, all_csr_times)
+        print("CSR (root+quality+inversion, time-weighted):   {:.2f}%".format(csr_time_weighted * 100.0))
         print("  ↳ This is the standard ChordGNN paper metric - compare with their reported results")
+        print("  ↳ Divides time into 1/32 note segments, computes proportion of time correct")
+
+        # Also show onset-level for comparison
+        onset_csr = all_csr_acc.mean() * 100.0
+        print("CSR (onset-level, for comparison):            {:.2f}%".format(onset_csr))
     else:
         print("CSR: n/a (tasks not available)")
 
