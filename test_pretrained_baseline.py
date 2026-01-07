@@ -29,8 +29,13 @@ from torch.utils.data import DataLoader
 # ----------------------------
 # CONFIG
 # ----------------------------
+# If LOCAL_CKPT is set, use it directly instead of downloading from wandb
+LOCAL_CKPT = os.environ.get("LOCAL_CKPT", "")
 WANDB_ARTIFACT = os.environ.get("WANDB_ARTIFACT", "melkisedeath/chord_rec/model-kvd0jic5:v0")
 ARTIFACT_ROOT = os.environ.get("ARTIFACT_ROOT", "./artifacts")
+
+# Set to "post" for finetuned models (PostChordPrediction), "base" for pretrained (ChordPrediction)
+MODEL_TYPE = os.environ.get("MODEL_TYPE", "base")
 
 MOZART_ROOT = os.environ.get("MOZART_ROOT", "./mozart_dataset")
 CACHE_ROOT = os.environ.get("CACHE_ROOT", "/scratch/network/kb9520/chordgnn_data")
@@ -146,13 +151,16 @@ def collate_fn_test(batch):
     label_mat = labels[:, :len(TASK_ORDER)]
     labels_dict = {task: label_mat[:, i].long() for i, task in enumerate(TASK_ORDER)}
 
-    # 15th column (index 14) is "onset" - needed by test_step
-    labels_dict["onset"] = labels[:, 14].long()
+    # 15th column is onset - add it if it exists
+    if labels.shape[1] > 14:
+        labels_dict["onset"] = labels[:, 14].long()
 
     # Add reverse edges
     edges, edge_type = add_reverse_edges_from_edge_index(edges, edge_type)
 
-    return x, edges, edge_type, labels_dict, onset_div, name
+    # Return lengths (to match finetuning script collate_fn)
+    lengths = torch.tensor([label_mat.shape[0]]).long()
+    return x, edges, edge_type, labels_dict, onset_div, lengths
 
 
 def copy_all_test_tsvs_into_cache(mozart_root: str, cache_root: str, data_version: str) -> int:
@@ -191,9 +199,15 @@ def main():
     print("DATA_VERSION   = {}".format(DATA_VERSION))
     print("WANDB_ARTIFACT = {}".format(WANDB_ARTIFACT))
 
-    banner("Step 1: Download checkpoint")
-    ckpt_path = download_wandb_ckpt(WANDB_ARTIFACT, ARTIFACT_ROOT)
-    print("✓ Checkpoint: {}".format(ckpt_path))
+    banner("Step 1: Get checkpoint path")
+    if LOCAL_CKPT:
+        ckpt_path = LOCAL_CKPT
+        if not os.path.exists(ckpt_path):
+            raise FileNotFoundError("LOCAL_CKPT specified but not found: {}".format(ckpt_path))
+        print("✓ Using local checkpoint: {}".format(ckpt_path))
+    else:
+        ckpt_path = download_wandb_ckpt(WANDB_ARTIFACT, ARTIFACT_ROOT)
+        print("✓ Downloaded checkpoint: {}".format(ckpt_path))
 
     banner("Step 2: Copy TEST TSVs into cache")
     copy_all_test_tsvs_into_cache(MOZART_ROOT, CACHE_ROOT, DATA_VERSION)
@@ -239,8 +253,15 @@ def main():
     )
 
     banner("Step 5: Load model from checkpoint")
-    # PyTorch Lightning will handle loading the ChordPrediction module
-    model = st.models.chord.ChordPrediction.load_from_checkpoint(
+    # Choose model class based on MODEL_TYPE
+    if MODEL_TYPE == "post":
+        ModelClass = st.models.chord.PostChordPrediction
+        print("Using PostChordPrediction (finetuned model)")
+    else:
+        ModelClass = st.models.chord.ChordPrediction
+        print("Using ChordPrediction (pretrained model)")
+
+    model = ModelClass.load_from_checkpoint(
         ckpt_path,
         strict=False,
         map_location="cpu"
