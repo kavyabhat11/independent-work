@@ -19,11 +19,15 @@ args = parser.parse_args()
 
 
 artifact_dir = os.path.normpath(f"./artifacts/{os.path.basename(args.use_ckpt)}")
-if not os.path.exists(artifact_dir):
+# Check if artifact directory exists AND contains model.ckpt
+ckpt_path = os.path.join(artifact_dir, "model.ckpt")
+if not os.path.exists(ckpt_path):
+    print(f"Downloading artifact: {args.use_ckpt}")
     import wandb
     api = wandb.Api()
     artifact = api.artifact(args.use_ckpt, type="model")
-    artifact_dir = artifact.download()
+    artifact_dir = artifact.download(root="./artifacts")
+    ckpt_path = os.path.join(artifact_dir, "model.ckpt")
 
 tasks = {
     "localkey": 38, "tonkey": 38, "degree1": 22, "degree2": 22, "quality": 11, "inversion": 4,
@@ -32,7 +36,7 @@ tasks = {
 encoder = ChordPrediction(in_feats=83, n_hidden=256, tasks=tasks, n_layers=1, lr=0.0, dropout=0.0,
                         weight_decay=0.0, use_nade=False, use_jk=False, use_rotograd=False, device="cpu").module
 model = PostChordPrediction(83, 256, tasks, 1, device="cpu", frozen_model=encoder)
-model = model.load_from_checkpoint(os.path.join(artifact_dir, "model.ckpt"))
+model = model.load_from_checkpoint(ckpt_path)
 encoder = model.frozen_model
 model = model.module
 score = pt.load_score(args.score_path)
