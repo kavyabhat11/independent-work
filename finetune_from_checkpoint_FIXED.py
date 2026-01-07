@@ -55,9 +55,10 @@ MOZART_ROOT = "./mozart_dataset"  # Should contain training/validation/test subd
 CACHE_ROOT = "/scratch/network/kb9520/chordgnn_data"
 CACHE = os.path.join(CACHE_ROOT, "AugmentedNetChordDataset", "dataset")
 
-# FIXED: Much lower learning rate for finetuning (was 5e-4, caused catastrophic forgetting)
-LR = 1e-5  # 50x smaller than before
-WEIGHT_DECAY = 1e-4  # Also reduced (was 3.5e-3)
+# Learning rate for training new head (encoder is frozen)
+# Since the head is randomly initialized and encoder is frozen, use training-from-scratch LR
+LR = 5e-4  # Same as original ChordGNN training
+WEIGHT_DECAY = 1e-4
 
 MAX_EPOCHS = 40
 BATCH_SIZE = 4
