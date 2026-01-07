@@ -20,8 +20,8 @@ PRETRAINED_CKPT = "melkisedeath/chord_rec/model-kvd0jic5:v0"  # Original pretrai
 FINETUNED_CKPT = "kb9520-princeton-university/chord_rec/mozart-finetuned-model-FIXED:v1"  # Finetuned
 
 # Directories
-TEST_XML_DIR = "data/mozart_test"  # Contains .xml test files
-GT_TXT_DIR = "data/mozart_test"    # Contains ground truth .txt files
+TEST_XML_DIR = "data/test_split"  # Contains .xml test files
+GT_TXT_DIR = "data/test_split"    # Contains ground truth .txt files
 
 # Output directories
 PRETRAINED_XML_DIR = "analysis/pretrained_musicxml"
