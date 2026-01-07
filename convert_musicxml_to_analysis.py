@@ -46,6 +46,42 @@ def transform_figured_bass(harmony: str) -> str:
     return harmony
 
 
+def validate_roman_numeral(harmony: str) -> Optional[str]:
+    """
+    Validate and normalize Roman numeral symbols for music21 compatibility.
+    Returns None if the symbol is invalid and should be skipped.
+    """
+    # Remove key prefix if present (e.g., "C:I" -> "I")
+    if ':' in harmony:
+        harmony = harmony.split(':', 1)[1]
+
+    # Filter out completely invalid symbols that music21 can't parse
+    invalid_prefixes = [
+        'Cad',      # Cadential (e.g., Cad6/4)
+        'Ped',      # Pedal
+        'CT',       # Common tone
+        'Aug',      # Augmented (when used as special symbol)
+        'Pass',     # Passing
+        'Sus',      # Suspension
+        'App',      # Appoggiatura
+        'Ret',      # Retardation
+    ]
+
+    for invalid in invalid_prefixes:
+        if harmony.startswith(invalid):
+            # Replace Cad6/4 with I6/4 as a reasonable approximation
+            if harmony.startswith('Cad'):
+                return harmony.replace('Cad', 'I')
+            # Skip other invalid symbols
+            return None
+
+    # Check for completely empty or whitespace
+    if not harmony.strip():
+        return None
+
+    return harmony
+
+
 def reverse_transform_figured_bass(harmony: str) -> str:
     """Convert slash form (6/5, 4/3) back into MusicXML-style figured bass."""
     patterns = [
@@ -355,7 +391,14 @@ def parse_musicxml(filepath: str) -> Tuple[dict, List[str]]:
                     out.append(format_beat(beat, sub))
 
             harm = transform_figured_bass(harm)
-            out.append(harm)
+
+            # Validate and filter invalid Roman numerals
+            validated_harm = validate_roman_numeral(harm)
+            if validated_harm is None:
+                # Skip this invalid harmony
+                continue
+
+            out.append(validated_harm)
 
         # If we skipped everything due to safety valve, skip the measure
         if len(out) > 1:
