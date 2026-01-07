@@ -572,20 +572,29 @@ for param in model.frozen_model.parameters():
 UNFREEZE_LAST_N_LAYERS = 3  # Unfreeze last 3 layers to adapt to Mozart style
 
 if UNFREEZE_LAST_N_LAYERS > 0:
-    # Get all named parameters in the encoder
-    encoder_params = list(model.frozen_model.named_parameters())
-    total_layers = len(encoder_params)
+    # Get ONLY encoder parameters (not task heads!)
+    # Filter for params with "encoder" or "gnn" in the name
+    all_frozen_params = list(model.frozen_model.named_parameters())
+    encoder_params = [(n, p) for n, p in all_frozen_params
+                     if "encoder" in n.lower() or "gnn" in n.lower() or "graph" in n.lower()]
 
-    # Unfreeze the last N layers
-    unfrozen_layers = []
-    for name, param in encoder_params[-UNFREEZE_LAST_N_LAYERS:]:
-        param.requires_grad = True
-        unfrozen_layers.append(name)
+    if len(encoder_params) == 0:
+        print("⚠ WARNING: No encoder parameters found to unfreeze!")
+        print(f"  Sample param names: {[n for n, _ in all_frozen_params[:5]]}")
+    else:
+        total_encoder_layers = len(encoder_params)
 
-    print(f"✓ Unfroze last {UNFREEZE_LAST_N_LAYERS} encoder layers:")
-    for name in unfrozen_layers:
-        print(f"  - {name}")
-    print(f"✓ Remaining {total_layers - UNFREEZE_LAST_N_LAYERS} layers frozen")
+        # Unfreeze the last N encoder layers
+        unfrozen_layers = []
+        for name, param in encoder_params[-UNFREEZE_LAST_N_LAYERS:]:
+            param.requires_grad = True
+            unfrozen_layers.append(name)
+
+        print(f"✓ Unfroze last {UNFREEZE_LAST_N_LAYERS} encoder layers:")
+        for name in unfrozen_layers:
+            print(f"  - {name}")
+        print(f"✓ Remaining {total_encoder_layers - UNFREEZE_LAST_N_LAYERS} encoder layers frozen")
+        print(f"✓ Total frozen_model params: {len(all_frozen_params)} (encoder + heads)")
 else:
     print("✓ frozen_model is fully frozen (non-trainable)")
 
