@@ -197,15 +197,42 @@ def main():
         ckpt_path = download_wandb_ckpt(WANDB_ARTIFACT, ARTIFACT_ROOT)
         print("✓ Downloaded checkpoint: {}".format(ckpt_path))
 
-    banner("Step 2: Copy TEST TSVs into cache")
-    copy_all_test_tsvs_into_cache(MOZART_ROOT, CACHE_ROOT, DATA_VERSION)
+    banner("Step 2: Load checkpoint to infer task configuration")
+    ckpt = torch.load(ckpt_path, map_location="cpu")
+    state_dict = ckpt.get("state_dict", {})
+    hparams = ckpt.get("hyper_parameters", {}) or {}
 
-    banner("Step 3: Build test dataset")
+    # Infer task dimensions from checkpoint heads
+    tasks_from_ckpt = {}
+    for key in state_dict.keys():
+        # Look for classifier heads: frozen_model.classifier.classifier.<task>.layers.1.weight
+        # or classifier.classifier.<task>.layers.1.weight
+        if ".classifier." in key and ".layers.1.weight" in key:
+            parts = key.split(".")
+            if "classifier" in parts:
+                idx = parts.index("classifier")
+                if idx + 1 < len(parts):
+                    task_name = parts[idx + 1]
+                    out_dim = state_dict[key].shape[0]
+                    tasks_from_ckpt[task_name] = out_dim
+
+    print("✓ Tasks inferred from checkpoint:")
+    for task, dim in tasks_from_ckpt.items():
+        print("  {}: {}".format(task, dim))
+
+    num_tasks_actual = len(tasks_from_ckpt)
+    print("✓ num_tasks = {}".format(num_tasks_actual))
+
+    # Get task order from the dataset class
     if DATA_VERSION == "v1.0.0":
         DatasetCls = st.data.datasets.chord.AugmentedNetChordGraphDataset
     else:
         DatasetCls = st.data.datasets.chord.Augmented2022ChordGraphDataset
 
+    banner("Step 3: Copy TEST TSVs into cache")
+    copy_all_test_tsvs_into_cache(MOZART_ROOT, CACHE_ROOT, DATA_VERSION)
+
+    banner("Step 4: Build test dataset with correct num_tasks")
     # Try test split, fallback to all
     try:
         test_dataset = DatasetCls(
@@ -213,7 +240,7 @@ def main():
             force_reload=True,
             nprocs=max(1, NUM_WORKERS),
             include_synth=False,
-            num_tasks=11,
+            num_tasks=num_tasks_actual,
             collection="test",
         )
         print("✓ Test dataset built with collection='test'")
@@ -224,18 +251,34 @@ def main():
             force_reload=True,
             nprocs=max(1, NUM_WORKERS),
             include_synth=False,
-            num_tasks=11,
+            num_tasks=num_tasks_actual,
             collection="all",
         )
         print("✓ Test dataset built with collection='all'")
 
     print("✓ Test dataset length: {}".format(len(test_dataset)))
 
-    banner("Step 4: Load model from checkpoint")
-    ckpt = torch.load(ckpt_path, map_location="cpu")
+    # Get the actual task order from the dataset
+    if hasattr(test_dataset, 'tasks'):
+        TASK_ORDER = list(test_dataset.tasks.keys())
+    elif hasattr(test_dataset, 'task_names'):
+        TASK_ORDER = test_dataset.task_names
+    elif hasattr(test_dataset.dataset, 'tasks'):
+        TASK_ORDER = list(test_dataset.dataset.tasks.keys())
+    else:
+        # Fallback to hardcoded order (risky!)
+        print("WARNING: Could not detect dataset task order, using hardcoded order")
+        TASK_ORDER = [
+            "localkey", "tonkey", "degree1", "degree2", "quality", "inversion",
+            "root", "romanNumeral", "hrhythm", "pcset", "bass", "tenor", "alto", "soprano"
+        ]
 
+    print("✓ Dataset task order:")
+    for i, task in enumerate(TASK_ORDER):
+        print("  [{}] {}".format(i, task))
+
+    banner("Step 5: Load model from checkpoint")
     # Determine if this is a finetuned (PostChordPrediction) or base model
-    state_dict = ckpt.get("state_dict", {})
     is_finetuned = any(k.startswith("frozen_model.") for k in state_dict.keys())
 
     if is_finetuned or MODEL_TYPE == "post":
@@ -266,11 +309,7 @@ def main():
 
     loader = DataLoader(test_dataset, batch_size=1, num_workers=0, shuffle=False)
 
-    TASK_ORDER = [
-        "localkey", "tonkey", "degree1", "degree2", "quality", "inversion",
-        "root", "romanNumeral", "hrhythm", "pcset", "bass", "tenor", "alto", "soprano"
-    ]
-
+    # TASK_ORDER is already set from dataset detection above
     correct_by_task = defaultdict(int)
     total_by_task = defaultdict(int)
 
@@ -367,22 +406,37 @@ def main():
                 print("Processed {}/{} graphs...".format(idx + 1, len(loader)))
 
     banner("TEST RESULTS")
+    print("Per-task accuracy:")
     for tname in TASK_ORDER:
         tot = total_by_task[tname]
         if tot == 0:
-            print("{:14s}: n/a".format(tname))
+            print("{:14s}: n/a (total=0 - CHECK TASK ORDER!)".format(tname))
         else:
             acc = 100.0 * correct_by_task[tname] / tot
             print("{:14s}: {:7.2f}% ({}/{})".format(tname, acc, correct_by_task[tname], tot))
 
-    print()
+    print("\nComposite metrics:")
     if rnalt_total > 0:
         rnalt_acc = 100.0 * rnalt_correct / rnalt_total
         print("RNalt (romanNumeral+localkey+inversion): {:.2f}% ({}/{})".format(rnalt_acc, rnalt_correct, rnalt_total))
+    else:
+        print("RNalt: n/a (total=0)")
 
     if romnum_total > 0:
         romnum_acc = 100.0 * romnum_correct / romnum_total
         print("Val RomNum (all 5 components):           {:.2f}% ({}/{})".format(romnum_acc, romnum_correct, romnum_total))
+    else:
+        print("Val RomNum: n/a (total=0)")
+
+    # Sanity check: warn if any tasks have suspiciously low totals
+    print("\nSanity check - label totals per task:")
+    avg_total = sum(total_by_task.values()) / len(total_by_task) if total_by_task else 0
+    for tname in TASK_ORDER:
+        tot = total_by_task[tname]
+        if tot < avg_total * 0.5 and avg_total > 0:
+            print("  ⚠️  {}: {} (much lower than avg {:.0f})".format(tname, tot, avg_total))
+        else:
+            print("  ✓  {}: {}".format(tname, tot))
 
 
 if __name__ == "__main__":
