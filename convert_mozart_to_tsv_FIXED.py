@@ -278,10 +278,10 @@ def compute_tonicized_key(tonkey_rn: str, local_key_tok: str):
         tonkey_rn="IV", local_key_tok="G" -> "C"
     """
     if not tonkey_rn or tonkey_rn == local_key_tok:
-        return local_key_tok
+        return local_key_tok if local_key_tok else "C"
 
     if m21key is None or m21pitch is None:
-        return local_key_tok
+        return local_key_tok if local_key_tok else "C"
 
     try:
         local_key = key_token_to_music21_key(local_key_tok)
@@ -302,10 +302,10 @@ def compute_tonicized_key(tonkey_rn: str, local_key_tok: str):
         if is_minor:
             tonic_name = tonic_name.lower()
 
-        return tonic_name
+        return tonic_name if tonic_name else "C"
 
     except Exception:
-        return local_key_tok
+        return local_key_tok if local_key_tok else "C"
 
 
 def duration_to_harmonic_rhythm_category(duration_beats: float):
@@ -475,6 +475,16 @@ def realize_roman_numeral(roman_str: str, local_key_tok: str, midi_pitches: list
     else:
         pcs = (0, 4, 7)  # Default C major triad
 
+    # Validate and normalize keys
+    validated_local_key = local_key_tok if local_key_tok else "C"
+    validated_ton_key = tonicized_key_tok if tonicized_key_tok else validated_local_key
+
+    # Ensure keys are not just punctuation
+    if validated_local_key in ['-', '#', 'b', '']:
+        validated_local_key = "C"
+    if validated_ton_key in ['-', '#', 'b', '']:
+        validated_ton_key = validated_local_key
+
     # Defaults
     out = {
         "a_romanNumeral": base_rn,
@@ -484,8 +494,8 @@ def realize_roman_numeral(roman_str: str, local_key_tok: str, midi_pitches: list
         "a_inversion": 0.0,
         "a_quality": "unknown",
         "a_pcset": repr(pcs),
-        "a_localKey": (local_key_tok if local_key_tok else "C"),
-        "a_tonicizedKey": tonicized_key_tok,
+        "a_localKey": validated_local_key,
+        "a_tonicizedKey": validated_ton_key,
         "a_degree1": '1',
         "a_degree2": 'None',
         "a_soprano": soprano,
@@ -533,6 +543,9 @@ def realize_roman_numeral(roman_str: str, local_key_tok: str, midi_pitches: list
         # Normalize local key
         local_key_normalized = (local_key_tok if local_key_tok else kobj.tonic.name)
         local_key_normalized = local_key_normalized.replace('b', '-').replace('##', '#')
+        # Validate key is not empty or just punctuation
+        if not local_key_normalized or local_key_normalized in ['-', '#', 'b', '']:
+            local_key_normalized = "C"
         out["a_localKey"] = local_key_normalized
 
         # Degree1: scale degree of the chord in the tonicized key
@@ -550,6 +563,9 @@ def realize_roman_numeral(roman_str: str, local_key_tok: str, midi_pitches: list
 
         # Tonicized key (already computed above)
         ton_normalized = tonicized_key_tok.replace('b', '-').replace('##', '#')
+        # Validate key is not empty or just punctuation
+        if not ton_normalized or ton_normalized in ['-', '#', 'b', '']:
+            ton_normalized = local_key_normalized
         out["a_tonicizedKey"] = ton_normalized
 
         return out
