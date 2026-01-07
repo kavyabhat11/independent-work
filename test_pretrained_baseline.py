@@ -122,18 +122,17 @@ has_frozen_model = any(k.startswith("frozen_model.") for k in checkpoint_keys)
 
 # Always use ChordPredictionModel (the only model class available)
 print("Using ChordPredictionModel architecture")
+# Only pass parameters that ChordPredictionModel actually accepts
 model = st.models.ChordPredictionModel(
     tasks=pretrained_tasks,
     in_feats=in_feats,
     n_hidden=pretrained_n_hidden,
     n_layers=pretrained_n_layers,
     dropout=pretrained_dropout,
-    use_nade=pretrained_use_nade,
-    use_jk=pretrained_use_jk,
-    use_rotograd=pretrained_use_rotograd,
     lr=1e-3,
     weight_decay=1e-4,
 )
+print(f"  use_nade={pretrained_use_nade}, use_jk={pretrained_use_jk}, use_rotograd={pretrained_use_rotograd} (not passed, may not be supported)")
 
 # Load weights - strip "frozen_model." prefix if present
 cleaned_state_dict = {}
