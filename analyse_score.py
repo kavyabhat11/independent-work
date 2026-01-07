@@ -26,8 +26,17 @@ if not os.path.exists(ckpt_path):
     import wandb
     api = wandb.Api()
     artifact = api.artifact(args.use_ckpt, type="model")
-    artifact_dir = artifact.download(root="./artifacts")
-    ckpt_path = os.path.join(artifact_dir, "model.ckpt")
+    downloaded_dir = artifact.download(root="./artifacts")
+    print(f"Downloaded to: {downloaded_dir}")
+
+    # Find model.ckpt in downloaded directory
+    import glob
+    ckpt_files = glob.glob(os.path.join(downloaded_dir, "*.ckpt"))
+    if not ckpt_files:
+        raise FileNotFoundError(f"No .ckpt file found in {downloaded_dir}")
+    ckpt_path = ckpt_files[0]
+    artifact_dir = downloaded_dir
+    print(f"Using checkpoint: {ckpt_path}")
 
 tasks = {
     "localkey": 38, "tonkey": 38, "degree1": 22, "degree2": 22, "quality": 11, "inversion": 4,
