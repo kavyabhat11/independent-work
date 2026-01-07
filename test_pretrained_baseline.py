@@ -9,6 +9,9 @@ import torch
 import chordgnn as st
 from pytorch_lightning import Trainer
 
+# Set default dtype to avoid compatibility issues
+torch.set_default_dtype(torch.float32)
+
 # Same config as finetuning script
 WANDB_ARTIFACT = "melkisedeath/chord_rec/model-kvd0jic5:v0"
 ARTIFACT_ROOT = "./artifacts"
@@ -122,6 +125,7 @@ has_frozen_model = any(k.startswith("frozen_model.") for k in checkpoint_keys)
 
 # Always use ChordPredictionModel (the only model class available)
 print("Using ChordPredictionModel architecture")
+
 # Only pass parameters that ChordPredictionModel actually accepts
 model = st.models.ChordPredictionModel(
     in_feats=in_feats,
