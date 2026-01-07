@@ -12,7 +12,7 @@ TEST_DIR = "data/mozart_test"             # new isolated test dir
 ANALYSE_SCRIPT = "analyse_score.py"
 OUTPUT_DIR = "analysis/mozart_test"
 
-USE_CKPT = "kb9520-princeton-university/chord_rec/mozart-finetuned-model:v1"
+USE_CKPT = "kb9520-princeton-university/chord_rec/mozart-finetuned-model-FIXED:v1"
 # ------------------------
 
 def base(path):
