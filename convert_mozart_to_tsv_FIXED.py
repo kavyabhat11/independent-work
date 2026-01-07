@@ -469,11 +469,8 @@ def realize_roman_numeral(roman_str: str, local_key_tok: str, midi_pitches: list
     # Extract voices from actual notes
     soprano, alto, tenor, bass = extract_voices_from_midi(midi_pitches)
 
-    # Compute pcset from actual notes
-    if midi_pitches:
-        pcs = tuple(sorted(set(m % 12 for m in midi_pitches)))
-    else:
-        pcs = (0, 4, 7)  # Default C major triad
+    # Default pcset (will be overridden by music21 if available)
+    pcs = (0, 4, 7)  # C major triad default
 
     # Validate and normalize keys
     validated_local_key = local_key_tok if local_key_tok else "C"
@@ -520,6 +517,10 @@ def realize_roman_numeral(roman_str: str, local_key_tok: str, midi_pitches: list
 
         # Inversion
         out["a_inversion"] = int(rn.inversion())
+
+        # PCset from music21 RomanNumeral (guaranteed to be in vocabulary)
+        pcs_from_rn = tuple(sorted(set(p.pitchClass for p in rn.pitches)))
+        out["a_pcset"] = repr(pcs_from_rn)
 
         # Quality
         quality_map = {
