@@ -118,49 +118,37 @@ def download_wandb_ckpt(artifact_path: str, root: str) -> str:
     return ckpt
 
 
-def collate_fn_test(batch):
-    """
-    Collate function for test data that converts labels to dict format expected by Lightning.
-    Compatible with ChordPrediction.test_step().
-    """
-    from chordgnn.utils.hgraph import add_reverse_edges_from_edge_index
+def masked_accuracy(pred_logits: torch.Tensor, target: torch.Tensor):
+    """Compute accuracy masking out invalid labels."""
+    pred_classes = pred_logits.argmax(dim=-1)
+    mask = target >= 0
+    total = int(mask.sum().item())
+    if total == 0:
+        return 0, 0
+    correct = int((pred_classes[mask] == target[mask]).sum().item())
+    return correct, total
 
-    # Dataset returns: (x, edges, edge_type, labels, onset_div, name)
-    x, edges, edge_type, labels, onset_div, name = batch[0]
 
-    # Squeeze batch dimensions
-    x = x.squeeze(0).float()
-    edges = edges.squeeze(0)
-    edge_type = edge_type.squeeze(0)
-    onset_div = onset_div.squeeze()
+def align_target_to_pred_length(target: torch.Tensor, pred_len: int, onset_idx: Optional[torch.Tensor]):
+    """Align targets to prediction length."""
+    if target.ndim != 1:
+        target = target.view(-1)
 
-    # Task order matching checkpoint (14 tasks)
-    TASK_ORDER = [
-        "localkey", "tonkey", "degree1", "degree2", "quality", "inversion",
-        "root", "romanNumeral", "hrhythm", "pcset", "bass", "tenor", "alto", "soprano"
-    ]
+    if target.shape[0] == pred_len:
+        return target
 
-    # Convert labels tensor to dict
-    labels = labels.squeeze(0) if labels.ndim == 4 else labels
-    if labels.ndim == 3 and labels.shape[-1] == 1:
-        labels = labels.squeeze(-1)
-    if labels.ndim != 2 or labels.shape[1] < 15:
-        raise RuntimeError("Unexpected labels shape: {} for {}".format(tuple(labels.shape), name))
+    if onset_idx is not None:
+        onset_idx_flat = onset_idx.view(-1).long()
+        if onset_idx_flat.shape[0] == pred_len:
+            max_i = int(onset_idx_flat.max().item()) if onset_idx_flat.numel() > 0 else -1
+            if target.shape[0] >= max_i + 1:
+                return target[onset_idx_flat]
 
-    # First 14 columns are the tasks
-    label_mat = labels[:, :len(TASK_ORDER)]
-    labels_dict = {task: label_mat[:, i].long() for i, task in enumerate(TASK_ORDER)}
+    if target.shape[0] > pred_len:
+        return target[:pred_len]
 
-    # 15th column is onset - add it if it exists
-    if labels.shape[1] > 14:
-        labels_dict["onset"] = labels[:, 14].long()
-
-    # Add reverse edges
-    edges, edge_type = add_reverse_edges_from_edge_index(edges, edge_type)
-
-    # Return lengths (to match finetuning script collate_fn)
-    lengths = torch.tensor([label_mat.shape[0]]).long()
-    return x, edges, edge_type, labels_dict, onset_div, lengths
+    pad = torch.full((pred_len - target.shape[0],), -1, dtype=target.dtype, device=target.device)
+    return torch.cat([target, pad], dim=0)
 
 
 def copy_all_test_tsvs_into_cache(mozart_root: str, cache_root: str, data_version: str) -> int:
@@ -243,42 +231,158 @@ def main():
 
     print("✓ Test dataset length: {}".format(len(test_dataset)))
 
-    banner("Step 4: Create test DataLoader")
-    test_loader = DataLoader(
-        test_dataset,
-        batch_size=1,
-        num_workers=0,
-        shuffle=False,
-        collate_fn=collate_fn_test
-    )
+    banner("Step 4: Load model from checkpoint")
+    ckpt = torch.load(ckpt_path, map_location="cpu")
 
-    banner("Step 5: Load model from checkpoint")
-    # Choose model class based on MODEL_TYPE
-    if MODEL_TYPE == "post":
+    # Determine if this is a finetuned (PostChordPrediction) or base model
+    state_dict = ckpt.get("state_dict", {})
+    is_finetuned = any(k.startswith("frozen_model.") for k in state_dict.keys())
+
+    if is_finetuned or MODEL_TYPE == "post":
+        print("Detected finetuned model (PostChordPrediction)")
+        from chordgnn.models.chord import ChordPredictionModel
+
+        # Load the frozen encoder
+        frozen_model = ChordPredictionModel(in_feats=352)  # Will be overridden by checkpoint
+
+        # Load the full model
         ModelClass = st.models.chord.PostChordPrediction
-        print("Using PostChordPrediction (finetuned model)")
+        model = ModelClass.load_from_checkpoint(ckpt_path, strict=False, map_location="cpu")
+        use_frozen = True
     else:
+        print("Detected base pretrained model (ChordPrediction)")
         ModelClass = st.models.chord.ChordPrediction
-        print("Using ChordPrediction (pretrained model)")
+        model = ModelClass.load_from_checkpoint(ckpt_path, strict=False, map_location="cpu")
+        use_frozen = False
 
-    model = ModelClass.load_from_checkpoint(
-        ckpt_path,
-        strict=False,
-        map_location="cpu"
-    )
     print("✓ Model loaded from checkpoint")
 
-    banner("Step 6: Run test with Lightning Trainer")
-    trainer = Trainer(
-        accelerator="gpu" if torch.cuda.is_available() else "cpu",
-        devices=1,
-        logger=False,  # Disable logging for simple test
-    )
+    banner("Step 5: Manual evaluation loop")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = model.to(device).eval()
 
-    # This will automatically compute all metrics including RNalt
-    trainer.test(model, dataloaders=test_loader)
+    from chordgnn.utils.hgraph import add_reverse_edges_from_edge_index
+    from chordgnn.models.chord import unique_onsets
 
-    banner("Testing complete! Check output above for RNalt and other metrics.")
+    loader = DataLoader(test_dataset, batch_size=1, num_workers=0, shuffle=False)
+
+    TASK_ORDER = [
+        "localkey", "tonkey", "degree1", "degree2", "quality", "inversion",
+        "root", "romanNumeral", "hrhythm", "pcset", "bass", "tenor", "alto", "soprano"
+    ]
+
+    correct_by_task = defaultdict(int)
+    total_by_task = defaultdict(int)
+
+    # RNalt: romanNumeral + localkey + inversion all correct
+    rnalt_correct = 0
+    rnalt_total = 0
+
+    # Val RomNum: degree1 + degree2 + quality + root + inversion + localkey all correct
+    romnum_correct = 0
+    romnum_total = 0
+
+    with torch.no_grad():
+        for idx, batch in enumerate(loader):
+            x, edges, edge_type, labels, onset_div, name = batch
+
+            x = x.squeeze(0).float().to(device)
+            edges = edges.squeeze(0).to(device)
+            edge_type = edge_type.squeeze(0).to(device)
+            onset_div = onset_div.squeeze().to(device)
+
+            # Process labels
+            labels = labels.squeeze(0)
+            if labels.ndim == 3 and labels.shape[-1] == 1:
+                labels = labels.squeeze(-1)
+            labels = labels[:, :len(TASK_ORDER)]
+
+            # Prepare model inputs
+            onset_edges = edges[:, edge_type == 0]
+            edges2, edge_type2 = add_reverse_edges_from_edge_index(edges, edge_type)
+            onset_idx = unique_onsets(onset_div)
+
+            # Forward pass
+            if use_frozen:
+                # For finetuned models: frozen_model then module
+                x_encoded = model.frozen_model((x, edges2, edge_type2, onset_edges, onset_idx, None))
+                preds = model.module(x_encoded)
+            else:
+                # For base models: direct forward
+                preds = model.module((x, edges2, edge_type2, onset_edges, onset_idx, None))
+
+            # Compute per-task accuracy
+            for t_i, tname in enumerate(TASK_ORDER):
+                if tname not in preds:
+                    continue
+                pred_logits = preds[tname]
+                target = labels[:, t_i].long().to(device)
+                target_aligned = align_target_to_pred_length(target, pred_logits.shape[0], onset_idx)
+                c, tot = masked_accuracy(pred_logits, target_aligned)
+                correct_by_task[tname] += c
+                total_by_task[tname] += tot
+
+            # Compute RNalt (romanNumeral + localkey + inversion)
+            if all(k in preds for k in ("romanNumeral", "localkey", "inversion")):
+                rn_pred = preds["romanNumeral"].argmax(dim=-1)
+                lk_pred = preds["localkey"].argmax(dim=-1)
+                inv_pred = preds["inversion"].argmax(dim=-1)
+
+                rn_t = align_target_to_pred_length(labels[:, TASK_ORDER.index("romanNumeral")].long().to(device), rn_pred.shape[0], onset_idx)
+                lk_t = align_target_to_pred_length(labels[:, TASK_ORDER.index("localkey")].long().to(device), lk_pred.shape[0], onset_idx)
+                inv_t = align_target_to_pred_length(labels[:, TASK_ORDER.index("inversion")].long().to(device), inv_pred.shape[0], onset_idx)
+
+                mask = (rn_t >= 0) & (lk_t >= 0) & (inv_t >= 0)
+                tot = int(mask.sum().item())
+                if tot > 0:
+                    corr = int(((rn_pred == rn_t) & (lk_pred == lk_t) & (inv_pred == inv_t) & mask).sum().item())
+                    rnalt_correct += corr
+                    rnalt_total += tot
+
+            # Compute Val RomNum (degree1+degree2+quality+root+inversion+localkey)
+            if all(k in preds for k in ("degree1", "degree2", "quality", "root", "inversion", "localkey")):
+                d1_pred = preds["degree1"].argmax(dim=-1)
+                d2_pred = preds["degree2"].argmax(dim=-1)
+                q_pred = preds["quality"].argmax(dim=-1)
+                r_pred = preds["root"].argmax(dim=-1)
+                i_pred = preds["inversion"].argmax(dim=-1)
+                lk_pred = preds["localkey"].argmax(dim=-1)
+
+                d1_t = align_target_to_pred_length(labels[:, TASK_ORDER.index("degree1")].long().to(device), d1_pred.shape[0], onset_idx)
+                d2_t = align_target_to_pred_length(labels[:, TASK_ORDER.index("degree2")].long().to(device), d2_pred.shape[0], onset_idx)
+                q_t = align_target_to_pred_length(labels[:, TASK_ORDER.index("quality")].long().to(device), q_pred.shape[0], onset_idx)
+                r_t = align_target_to_pred_length(labels[:, TASK_ORDER.index("root")].long().to(device), r_pred.shape[0], onset_idx)
+                i_t = align_target_to_pred_length(labels[:, TASK_ORDER.index("inversion")].long().to(device), i_pred.shape[0], onset_idx)
+                lk_t = align_target_to_pred_length(labels[:, TASK_ORDER.index("localkey")].long().to(device), lk_pred.shape[0], onset_idx)
+
+                mask = (d1_t >= 0) & (d2_t >= 0) & (q_t >= 0) & (r_t >= 0) & (i_t >= 0) & (lk_t >= 0)
+                tot = int(mask.sum().item())
+                if tot > 0:
+                    degree_match = (d1_pred == d1_t) & (d2_pred == d2_t)
+                    corr = int((degree_match & (q_pred == q_t) & (r_pred == r_t) & (i_pred == i_t) & (lk_pred == lk_t) & mask).sum().item())
+                    romnum_correct += corr
+                    romnum_total += tot
+
+            if (idx + 1) % 100 == 0:
+                print("Processed {}/{} graphs...".format(idx + 1, len(loader)))
+
+    banner("TEST RESULTS")
+    for tname in TASK_ORDER:
+        tot = total_by_task[tname]
+        if tot == 0:
+            print("{:14s}: n/a".format(tname))
+        else:
+            acc = 100.0 * correct_by_task[tname] / tot
+            print("{:14s}: {:7.2f}% ({}/{})".format(tname, acc, correct_by_task[tname], tot))
+
+    print()
+    if rnalt_total > 0:
+        rnalt_acc = 100.0 * rnalt_correct / rnalt_total
+        print("RNalt (romanNumeral+localkey+inversion): {:.2f}% ({}/{})".format(rnalt_acc, rnalt_correct, rnalt_total))
+
+    if romnum_total > 0:
+        romnum_acc = 100.0 * romnum_correct / romnum_total
+        print("Val RomNum (all 5 components):           {:.2f}% ({}/{})".format(romnum_acc, romnum_correct, romnum_total))
 
 
 if __name__ == "__main__":
