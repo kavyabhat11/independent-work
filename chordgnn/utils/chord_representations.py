@@ -126,13 +126,11 @@ def time_divided_tsv_to_note_array(time_divided_tsv_path, transpose=False, versi
     if "ts_beats" in df.columns and len(df) > 0:
         ts_value = df["ts_beats"].iloc[0]
         time_signature = int(ts_value)
-        print(f"DEBUG: Read ts_beats={time_signature} from {time_divided_tsv_path}")
     else:
         # Fall back to inference from measure 2
         time_signature = len(df[df["s_measure"] == 2]) / 8
         # Assume 4/4 time signature when 0
         time_signature = 4 if time_signature == 0 else time_signature
-        print(f"DEBUG: Used fallback ts={time_signature} (no ts_beats column) for {time_divided_tsv_path}")
     has_onsets = df["s_isOnset"].apply(lambda x: any(eval(x))).to_numpy()
     num_notes = df["s_isOnset"].apply(lambda x: len(eval(x))).to_numpy()
     # Filter when rests are present

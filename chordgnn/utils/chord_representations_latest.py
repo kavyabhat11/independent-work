@@ -2077,9 +2077,6 @@ def m21Pitch(pitch):
 
 
 def create_data_latest(filtered_df, time_signature, interval="P1"):
-    # DEBUG: Print what we actually received
-    print(f"DEBUG create_data_latest: time_signature={time_signature}, type={type(time_signature)}")
-
     note_array = list()
     onset = np.expand_dims(filtered_df["j_offset"].to_numpy(), axis=1)
     localkey = encode_one_hot(filtered_df, LocalKey38, transposition=interval)
