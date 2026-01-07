@@ -57,7 +57,8 @@ CACHE = os.path.join(CACHE_ROOT, "AugmentedNetChordDataset", "dataset")
 
 # Learning rate for training new head (encoder is frozen)
 # Since the head is randomly initialized and encoder is frozen, use training-from-scratch LR
-LR = 5e-4  # Same as original ChordGNN training
+# Original ChordGNN used 1.5e-3, using 1e-3 as middle ground for smaller dataset
+LR = 1e-3  # Balanced: faster than 5e-4, safer than original 1.5e-3
 WEIGHT_DECAY = 1e-4
 
 MAX_EPOCHS = 40

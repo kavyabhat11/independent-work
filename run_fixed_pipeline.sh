@@ -23,11 +23,14 @@ conda run -n chordgnn python3 convert_mozart_to_tsv_FIXED.py \
     --grid 0.5
 echo ""
 
-# Step 3: Split into train/val/test
+# Step 3: Split into train/val/test BY WORK (keeps movements together)
 echo "[3/4] Splitting data into train/val/test..."
-conda run -n chordgnn python3 split_mozart_data.py \
+# With 104 files (~60-70 works): 44 train works, 30 val works, rest test
+conda run -n chordgnn python3 split_mozart_data_FIXED.py \
     --tsv_dir ./mozart_tsv_fixed \
-    --output_dir ./mozart_dataset_fixed
+    --output_dir ./mozart_dataset_fixed \
+    --n_train 44 \
+    --n_val 30
 echo ""
 
 # Step 4: Run finetuning
