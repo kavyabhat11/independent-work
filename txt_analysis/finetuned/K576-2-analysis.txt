@@ -1,0 +1,79 @@
+Composer: [TODO]
+Piece: [TODO]
+Analyst: [TODO]
+Proofreader: [TODO]
+Note: [TODO]
+
+Tempo: [TODO]
+Time Signature: 3/4
+
+Form: [TODO]
+[TODO: Add pedal markings if applicable]
+
+m1 A: I b2 V
+m2 I b2 V
+m3 I b2 IV b3 ii6 b3.25 ii
+m4 I b2 V
+m5 I b2 V
+m6 I b2 viio7/i b2.5 ii/o2/i b3 viio/V b3.25 V4/3/iii b3.5 V6/4/iii
+m7 I b1.625 I6/4 b1.75 I b2.75 I6/4 b3 V7
+m8 I
+m9 V7 b2.5 I b2.875 I6/4 b3 V7
+m10 I b2.5 V7 b2.75 V6/5 b2.875 V7 b3 I b3.5 V
+m11 vi b3 ii2 b3.75 I
+m12 V
+m13 III+65/ii b1.75 III+2/ii b1.8125 viio b2 ii b3 viio
+m14 I b2 V7 b2.5 iii7 b3.5 V7
+m15 ii b2 I b2.25 I6/4 b3 V7
+m16 I
+m17 f#: i b3 V
+m19 i b1.5 V b2 Fr7 b2.25 Ger6/5 b2.5 Ger7
+m20 V
+m21 i b3 V b3.5 D: V6 b3.75 viio
+m23 I b1.5 V b2 ii b2.5 I2 b2.75 III+43/i b3 I6/4 b3.25 I b3.5 V7
+m24 I b3 V7
+m25 I b3 V7
+m26 I b3.25 I6/4 b3.75 ii/IV
+m27 iio/iv b1.125 viio6/IV b1.375 viio6/4/ii b3 viio/ii
+m28 ii b3.375 viio6 b3.875 V/V
+m29 f#: V b3.375 V7 b3.875 V
+m30 i b2 F#: It/vii b2.125 f#: IV/I b2.625 It/vii b2.75 IV/I b3 Ger6/5 b3.25 Ger7
+m31 V
+m32 i b3 V b3.75 i6/4
+m33 V
+m34 i b1.5 V b2 Fr7 b2.25 Ger6/5 b2.5 It b2.75 I2/V b3.25 Ger7
+m35 V
+m36 i6/4 b1.75 i b2.5 i6/4 b3 V b3.75 V7
+m37 b1.25 viio b1.5 C#: viio/iv b1.75 I6/5 b2 iii7 b2.5 viio b3.5 I6/5 b3.75 f#: I6/5/V
+m38 IV/I b1.5 It6 b2 i b3.5 V7
+m39 i b3 V7
+m40 i b3 V7
+m41 i b3.625 VI7 b3.875 VI
+m42 iv/iii b1.125 A: iv/i
+m43 V7
+m44 I b2 V7 b3.5 V
+m45 I b2 V
+m46 I b2 IV b2.5 ii6 b3.25 ii
+m47 I b2 V
+m48 I b2 V
+m49 I b2 viio7/i b3 viio/V b3.25 V6/4/iii
+m50 I b1.5 I6/4 b1.625 I b2.75 I6/4 b3 iii6 b3.25 V7
+m51 I
+m52 V7 b2.5 I b2.875 I6/4 b3 V7
+m53 I b2.5 V7 b3 I b3.5 V
+m54 vi b3 ii2 b3.375 I
+m55 b2 V
+m56 iii b1.5 viio b2 ii b3 viio
+m57 I b2 viio b3.5 viio6
+m58 ii b2 I b2.25 I6/4 b3 V7
+m59 I b3 IV
+m60 I b3 IV
+m61 I b2 V7
+m62 I b3 IV
+m63 I b3 IV
+m64 I b2 V7
+m65 I b3 V7
+m66 I b3 V7
+m67 I
+
+[TODO Review and add as needed]

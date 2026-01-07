@@ -17,6 +17,7 @@ Usage:
 import os
 import glob
 import shutil
+import numpy as np
 import math
 from collections import defaultdict
 from typing import Optional
@@ -460,6 +461,7 @@ def main():
                         # Common values: 480 or 960
                         # Strategy: check if typical onset gaps make sense
                         if len(onset_times_divisions) > 1:
+                            import numpy as np
                             typical_gap = np.median(np.diff(onset_times_divisions))
                             # If typical gap is ~480, likely 480 ppq. If ~240, likely 960 ppq, etc.
                             if typical_gap > 400:

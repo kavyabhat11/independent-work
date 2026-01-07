@@ -1,0 +1,68 @@
+Composer: [TODO]
+Piece: [TODO]
+Analyst: [TODO]
+Proofreader: [TODO]
+Note: [TODO]
+
+Tempo: [TODO]
+Time Signature: 4/4
+
+Form: [TODO]
+[TODO: Add pedal markings if applicable]
+
+m1 E-: I b2.5 V b3 I b4.5 V
+m2 I b1.5 IV6/4 b2 I6 b2.5 IV b3 I6/4 b4 V
+m3 I6 b2 I b2.5 V b3 I6 b3.5 V b4 I b4.5 IV6
+m4 I6 b1.5 ii6 b2 I6/4 b2.5 I6/4 b2.625 V7 b4 I
+m5 V b2 I b3 V7
+m6 I b2.5 viio4/3/v b3 I
+m7 IV b2 i6/i b3 V7/V b4 ii b4.5 viio/vi
+m8 vi b2 ii6 b3 I6/4 b3.875 I6/4 b4 V
+m9 I b2.5 V b3 I b4.5 V
+m10 I b1.5 IV6 b2 I6 b2.5 IV b3 I6/4 b4 V
+m11 I6 b2 I b2.5 V b3 I6 b3.5 V b4 I b4.5 IV6
+m12 I6 b1.5 ii6 b2 I6/4 b2.5 I6/4 b2.875 V7 b3 I6/4 b4 I
+m13 c: i b3 viio7
+m14 i b2 ii/o4/3 b2.25 iio6/4 b2.5 viio/v b3 i6/4 b4 V
+m15 i b1.75 VI6 b2 i b2.5 g: viio4/3 b3 i6 b4 viio6/5/v
+m16 V b1.5 VI b2 iio6 b2.5 V b3 i
+m17 c: V7/iv b1.25 f: V7 b2 c: i6/4/iv b2.25 f: i6/4 b3 V7 b4 E-: ii6/4 b4.5 ii6
+m18 V7 b2 I6/4 b3 V7 b4 I6/4
+m19 viio6/iii b2 c: V6 b2.5 V6/5 b3 I b4 VI6 b4.25 VI
+m20 N6 b3 I6/4 b4 V
+m21 i b3 viio7
+m22 i b2 ii/o4/3 b2.5 viio/v b3 i6/4 b4 V
+m23 i b2 I6/I b3 iv b4 viio/v b4.25 viio6/v
+m24 V b1.5 VI b2 iio6 b2.5 V b3 i b4.25 I6/I b4.5 V6/iv
+m25 f: V6 b3 E-: ii b4 viio6/5/i b4.5 viio7/i
+m26 b1.75 viio b2 V6 b3 V4/3
+m27 V6/5
+m28 I b2.5 V b3 I b4.5 V
+m29 I b1.5 IV6 b2 I6 b2.5 IV b3 I6/4 b4 V
+m30 I6 b2 I b2.5 V b3 I6 b3.5 V b4 I b4.5 IV6
+m31 I6 b1.5 ii6 b2 I6/4 b2.625 I6/4 b2.875 V7 b3 I
+m32 A-: I b2 V4/3 b3 I6 b3.5 I b4 V6
+m33 V6/5 b2 I b3 V6 b3.25 V6/5 b4 I
+m34 f: V2 b1.25 A-: V2/vi b1.5 f: V2 b2 E-: ii6 b3 V2 b4 I6
+m35 ii6 b2 V7 b2.25 I6/4 b2.5 V7 b3 I
+m36 viio4/3/v b2 V2/V b3 V6/5 b4 A-: V2
+m37 V6/5/IV b2 IV b2.5 ii6 b3 I6/4 b4 V
+m38 vi b2 vi6 b2.25 ii6/V b2.5 V2/V b3 V6/5 b4.5 V6
+m39 I6 b1.5 ii6 b2 I6/4 b2.5 V7 b3 I
+m40 f: V6 b1.25 E-: V6/ii b2 ii b3 V6/5 b4 I
+m41 viio6/5/v b3 V b4 viio4/3/v b4.5 viio6/5/v
+m42 V7 b1.25 V b2 e-: iv6/4/v b2.25 E-: viio4/3/ b2.5 viio6/5/v b3 V7
+m44 I b2.5 V b3 I b4.5 V
+m45 I b1.5 IV6/4 b2 I6 b2.5 IV b3 I6/4 b3.75 I6/4 b4 V
+m46 I6 b2 I b2.5 V b3 I6 b3.5 V b4 I b4.5 IV6
+m47 I6 b1.5 ii6 b2 I6/4 b2.5 I6/4 b2.75 V7 b4 I
+m48 IV6/4 b3 I
+m49 IV6/4 b3 I
+m50 IV6 b2 V6/5 b2.5 V6 b3 I b4 I6
+m51 ii6 b2.5 viio6/4 b2.75 V7 b3 viio/vi b4 vi
+m52 V7/V b2 V2/V b3 V6/5
+m53 I6 b1.5 ii6 b2 I6/4 b2.25 I6/4 b2.5 V7 b3 I b4 V7
+m54 I b2 V7 b3 I b4 V7
+m55 b3 I
+
+[TODO Review and add as needed]

@@ -46,7 +46,7 @@ CACHE_ROOT = os.environ.get("CACHE_ROOT", "/scratch/network/kb9520/chordgnn_data
 
 LR = float(os.environ.get("LR", "5e-5"))
 WEIGHT_DECAY = float(os.environ.get("WEIGHT_DECAY", "1e-4"))
-MAX_EPOCHS = int(os.environ.get("MAX_EPOCHS", "80"))
+MAX_EPOCHS = int(os.environ.get("MAX_EPOCHS", "20"))
 NUM_WORKERS = int(os.environ.get("NUM_WORKERS", "8"))
 
 # IMPORTANT: checkpoint has 14 heads
@@ -521,6 +521,16 @@ def main():
     for p in model.frozen_model.parameters():
         p.requires_grad = False
     print("✓ frozen_model fully frozen")
+    from collections import defaultdict
+    cnt = defaultdict(int)
+
+    for n,p in model.named_parameters():
+        if p.requires_grad:
+            cnt[n.split(".")[0]] += p.numel()
+
+    print("Trainable by top-level prefix:")
+    for k,v in sorted(cnt.items(), key=lambda x: -x[1]):
+        print(f"{k:20s} {v:,}")
 
     unfrozen_parts = []
 
@@ -603,10 +613,6 @@ def main():
         "unfreeze_last_n_gcn_layers": UNFREEZE_LAST_N_GCN_LAYERS,
         "unfreeze_gru": UNFREEZE_GRU,
     })
-
-    print("\n[PRE-FIT VALIDATE] (baseline under Lightning metrics)")
-    trainer.validate(model, datamodule=datamodule, verbose=True)
-
     trainer.fit(model, datamodule)
 
     print("\nBEST CKPT:", ckpt_cb.best_model_path)
