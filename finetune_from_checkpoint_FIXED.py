@@ -50,7 +50,7 @@ torch.manual_seed(0)
 # -------------------------
 WANDB_ARTIFACT = "melkisedeath/chord_rec/model-kvd0jic5:v0"
 ARTIFACT_ROOT = "./artifacts"
-MOZART_ROOT = os.environ.get("MOZART_ROOT", "./mozart_dataset_final")  # Can override with env var
+MOZART_ROOT = os.environ.get("MOZART_ROOT", "./mozart_dataset")  # Can override with env var
 
 CACHE_ROOT = "/scratch/network/kb9520/chordgnn_data"
 CACHE = os.path.join(CACHE_ROOT, "AugmentedNetChordDataset", "dataset")
@@ -277,41 +277,64 @@ class MozartDatamodule(LightningDataModule):
         return batch_inputs, edges, edge_type, batch_label, onset_div, lengths
 
     def setup(self, stage=None):
-        # Split dataset into train/val/test based on filenames
+        # Split dataset into train/val/test based on which subdirectory files came from
+        import glob
+        import os
+
         all_graphs = [(i, g) for i, g in enumerate(self.dataset.graphs)]
 
-        # Determine split based on graph names
+        # Get lists of filenames from each split directory
+        dataset_dir = os.path.join(CACHE_ROOT,
+                                   "AugmentedNetLatestChordDataset" if self.version == "v2.0.0" else "AugmentedNetChordDataset",
+                                   "dataset")
+
+        train_files = set(os.path.splitext(os.path.basename(f))[0]
+                         for f in glob.glob(f"{dataset_dir}/training/*.tsv"))
+        val_files = set(os.path.splitext(os.path.basename(f))[0]
+                       for f in glob.glob(f"{dataset_dir}/validation/*.tsv"))
+        test_files = set(os.path.splitext(os.path.basename(f))[0]
+                        for f in glob.glob(f"{dataset_dir}/test/*.tsv"))
+
+        print(f"\nSplitting {len(all_graphs)} graphs based on source files...")
+        print(f"  Train files: {len(train_files)}")
+        print(f"  Val files: {len(val_files)}")
+        print(f"  Test files: {len(test_files)}")
+
+        # Match graph names to file lists
         train_idx = []
         val_idx = []
         test_idx = []
 
-        print(f"\nSplitting {len(all_graphs)} graphs into train/val/test...")
-
         for i, g in all_graphs:
-            name = g.name.lower()  # Case-insensitive matching
+            # Graph names might have suffixes like K282-1-1, K282-1-2 for augmented versions
+            # Extract base name (everything before last hyphen if it's a number)
+            base_name = g.name
+            parts = base_name.rsplit('-', 1)
+            if len(parts) == 2 and parts[1].isdigit():
+                # Check if this is an augmentation suffix
+                maybe_base = parts[0]
+                if maybe_base not in train_files and maybe_base not in val_files and maybe_base not in test_files:
+                    # Not a split, keep full name
+                    pass
+                else:
+                    base_name = maybe_base
 
-            # Debug: print first few names to see the pattern
-            if i < 3:
-                print(f"  Sample graph name: {g.name}")
-
-            # Files in training/, validation/, test/ subdirs
-            if 'training' in name:
+            # Match to split
+            if base_name in train_files:
                 train_idx.append(i)
-            elif 'validation' in name:
+            elif base_name in val_files:
                 val_idx.append(i)
-            elif 'test' in name:
+            elif base_name in test_files:
                 test_idx.append(i)
 
-        print(f"  → Found {len(train_idx)} training, {len(val_idx)} validation, {len(test_idx)} test samples")
+        print(f"  → Matched {len(train_idx)} training, {len(val_idx)} validation, {len(test_idx)} test graphs")
 
-        # Fallback: if split failed, use all data for training
-        if len(train_idx) == 0 and len(val_idx) == 0 and len(test_idx) == 0:
-            print("  ⚠ WARNING: No samples matched train/val/test split!")
-            print("  → Using 80/10/10 split as fallback")
-            n = len(all_graphs)
-            train_idx = list(range(0, int(0.8 * n)))
-            val_idx = list(range(int(0.8 * n), int(0.9 * n)))
-            test_idx = list(range(int(0.9 * n), n))
+        # Sanity check
+        if len(train_idx) == 0 or len(val_idx) == 0 or len(test_idx) == 0:
+            print("  ⚠ ERROR: Split matching failed!")
+            print(f"  Sample graph names: {[g.name for _, g in all_graphs[:5]]}")
+            print(f"  Sample train files: {list(train_files)[:5]}")
+            raise RuntimeError("Failed to match graphs to train/val/test splits!")
 
         from torch.utils.data import Subset
 
