@@ -163,12 +163,29 @@ def acc_compute_time_step(acc_onset_level, onset_times):
     if len(acc_onset_level) == 0 or len(onset_times) == 0:
         return 0.0
 
+    # Debug: check onset time range
+    onset_min, onset_max = onset_times.min(), onset_times.max()
+    if onset_max - onset_min > 200:
+        print("Warning: Very large onset time range: {:.2f} to {:.2f} (range={:.2f})".format(
+            onset_min, onset_max, onset_max - onset_min))
+        print("  This might indicate onset times are in wrong units. Normalizing...")
+        onset_times = (onset_times - onset_min) / (onset_max - onset_min) * 100  # Normalize to 0-100
+
     df = pd.DataFrame({"onset": onset_times, "acc": acc_onset_level})
     dfout = copy.deepcopy(df)
     dfout["onset"] = dfout["onset"] - dfout["onset"].min()
 
     for i in range(1, len(df)):
         onset_diff = int((df["onset"][i] - df["onset"][i - 1]) / 0.125) - 1
+
+        # Sanity check: cap at 1000 segments per gap (125 beats or ~2 minutes at 60 BPM)
+        # This prevents infinite loops if onset times are corrupted
+        if onset_diff < 0:
+            onset_diff = 0
+        elif onset_diff > 1000:
+            print("Warning: Large gap between onsets ({} segments), capping at 1000".format(onset_diff))
+            onset_diff = 1000
+
         row_data = {"onset": df.iloc[i - 1]["onset"], "acc": df.iloc[i - 1]["acc"]}
         for j in range(onset_diff):
             row_data["onset"] = row_data["onset"] + 0.125
