@@ -66,25 +66,16 @@ for fname in sorted(os.listdir(GT_DIR)):
         compare.analyzed_file1 = converter.parse(gt_path, format='romantext')
     except Exception as e:
         err_msg = str(e)
-        # Common errors: "too many notes", "measure parsing"
-        if "too many notes" in err_msg.lower() or "measure" in err_msg.lower():
-            error_log.append(f"{base}: GT parsing error (measure/note issue)")
-            print(f"  -> GT parse error (measure issue), skipping")
-        else:
-            error_log.append(f"{base}: GT error - {err_msg[:100]}")
-            print(f"  -> GT load error, skipping")
+        error_log.append(f"{base}: GT parsing error - {err_msg[:80]}")
+        print(f"  -> GT load error, skipping")
         continue
 
     try:
         compare.analyzed_file2 = converter.parse(pred_path, format='romantext')
     except Exception as e:
         err_msg = str(e)
-        if "too many notes" in err_msg.lower() or "measure" in err_msg.lower():
-            error_log.append(f"{base}: PRED parsing error (measure/note issue)")
-            print(f"  -> PRED parse error (measure issue), skipping")
-        else:
-            error_log.append(f"{base}: PRED error - {err_msg[:100]}")
-            print(f"  -> prediction load error, skipping")
+        error_log.append(f"{base}: PRED parsing error - {err_msg[:80]}")
+        print(f"  -> prediction load error, skipping")
         continue
 
     # -----------------------------------------------------------

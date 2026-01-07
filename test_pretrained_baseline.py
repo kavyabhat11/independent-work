@@ -124,15 +124,15 @@ has_frozen_model = any(k.startswith("frozen_model.") for k in checkpoint_keys)
 print("Using ChordPredictionModel architecture")
 # Only pass parameters that ChordPredictionModel actually accepts
 model = st.models.ChordPredictionModel(
-    tasks=pretrained_tasks,
     in_feats=in_feats,
     n_hidden=pretrained_n_hidden,
+    tasks=pretrained_tasks,
     n_layers=pretrained_n_layers,
     dropout=pretrained_dropout,
-    lr=1e-3,
-    weight_decay=1e-4,
+    use_nade=pretrained_use_nade,
+    use_jk=pretrained_use_jk,
 )
-print(f"  use_nade={pretrained_use_nade}, use_jk={pretrained_use_jk}, use_rotograd={pretrained_use_rotograd} (not passed, may not be supported)")
+print(f"  use_nade={pretrained_use_nade}, use_jk={pretrained_use_jk}")
 
 # Load weights - strip "frozen_model." prefix if present
 cleaned_state_dict = {}
@@ -189,10 +189,19 @@ with torch.no_grad():
 
         # Forward pass
         from chordgnn.utils.hgraph import add_reverse_edges_from_edge_index
+        from chordgnn.models.chord import unique_onsets
+
+        # Extract onset edges (edge_type == 0)
+        onset_edges = edges[:, edge_type == 0]
+
+        # Add reverse edges
         edges, edge_type = add_reverse_edges_from_edge_index(edges, edge_type)
 
-        # Call model directly
-        preds = model(batch_inputs, edges, edge_type, onset_div)
+        # Compute onset indices
+        onset_idx = unique_onsets(onset_div)
+
+        # Call model with batch tuple (x, edge_index, edge_type, onset_index, onset_idx, lengths)
+        preds = model((batch_inputs, edges, edge_type, onset_edges, onset_idx, None))
 
         # Compute accuracy for each task
         for task_name, pred in preds.items():

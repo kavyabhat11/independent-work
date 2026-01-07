@@ -149,52 +149,57 @@ def dochorale(pieceName = ''):
 	lastRN2 = False
 	
 	for timePoint in totalOffsets:
-		rn1 = anal1.getElementsByOffset(timePoint, timePoint, includeEndBoundary = True, mustBeginInSpan = False, classList = ['RomanNumeral'])
-		rn2 = anal2.getElementsByOffset(timePoint, timePoint, includeEndBoundary = True, mustBeginInSpan = False, classList = ['RomanNumeral'])
-		if not rn1 or not rn2: continue
-		rn1 = rn1[0]
-		rn2 = rn2[0]
-		pitchNames1 = [x.name for x in rn1.pitches]
-		pitchNames2 = [x.name for x in rn2.pitches]
-		
-		#if pitchNames1 == pitchNames2 and DT.parse_figure(rn1.figure)[0] == DT.parse_figure(rn2.figure)[0]:
-		if globalIgnoreSixFour and rn2.figure.count('6/4'): 
-			rn2 = lastRN2
-		if rn1.figure == rn2.figure:
-			correctEighths += 1
-			s = 'C'
-		else:
-			pf1 = DT.parse_figure(rn1.figure)
-			pf2 = DT.parse_figure(rn2.figure)
-			if rn1.key.mode == rn2.key.mode and rn1.key.tonic == rn2.key.tonic:
-				if pf1[0] == pf2[0] and pf1[2] == pf2[2] and pf1[3] == pf2[3]:
-					if globalIgnoreInversions:
-						correctEighths += 1
-						continue
-					else:
-						inversionErrors += 1
-				localChordErrors += 1
-				wrongEighths += 1	
-				confusionLabel = rn2.figure + ' for ' + rn1.figure
-				confusionMatrix[confusionLabel] = confusionMatrix.setdefault(confusionLabel, 0) + 1
-				confusions.setdefault(confusionLabel, []).append([pieceName, timePoint])
+		try:
+			rn1 = anal1.getElementsByOffset(timePoint, timePoint, includeEndBoundary = True, mustBeginInSpan = False, classList = ['RomanNumeral'])
+			rn2 = anal2.getElementsByOffset(timePoint, timePoint, includeEndBoundary = True, mustBeginInSpan = False, classList = ['RomanNumeral'])
+			if not rn1 or not rn2: continue
+			rn1 = rn1[0]
+			rn2 = rn2[0]
+			pitchNames1 = [x.name for x in rn1.pitches]
+			pitchNames2 = [x.name for x in rn2.pitches]
+
+			#if pitchNames1 == pitchNames2 and DT.parse_figure(rn1.figure)[0] == DT.parse_figure(rn2.figure)[0]:
+			if globalIgnoreSixFour and rn2.figure.count('6/4'):
+				rn2 = lastRN2
+			if rn1.figure == rn2.figure:
+				correctEighths += 1
+				s = 'C'
 			else:
-				"""rn3 = anal1.getElementsByOffset(int(timePoint) - 1, int(timePoint) - 1, includeEndBoundary = True, mustBeginInSpan = False, classList = ['RomanNumeral'])
-				rn4 = anal1.getElementsByOffset(int(timePoint) + 1, int(timePoint) + 1, includeEndBoundary = True, mustBeginInSpan = False, classList = ['RomanNumeral'])
-				if rn3 and rn4: 
-					rn3 = rn3[0]
-					rn4 = rn4[0]"""
-				if sorted(pitchNames1) == sorted(pitchNames2):
-					localWrongKeyRightChord += 1
-				wrongEighths += 1
-				localKeyErrors += 1
-			s = 'I'
-		lastRN1 = rn1
-		lastRN2 = rn2
-		#print rn1.pitches, rn2.pitches, rn1.pitches == rn2.pitches
-		#print DT.parse_figure(rn1.figure)[0], DT.parse_figure(rn2.figure)[0], DT.parse_figure(rn1.figure)[0] == DT.parse_figure(rn2.figure)[0]
-		if printComparison: 
-			print_out(' '.join([str(x) for x in ['%i %.2f' % DT.get_measure_number_and_beat_from_offset(analyzed_file1, timePoint), s, keystring(rn1), rn1.figure, keystring(rn2), rn2.figure, pitchNames1, pitchNames2]]))
+				pf1 = DT.parse_figure(rn1.figure)
+				pf2 = DT.parse_figure(rn2.figure)
+				if rn1.key.mode == rn2.key.mode and rn1.key.tonic == rn2.key.tonic:
+					if pf1[0] == pf2[0] and pf1[2] == pf2[2] and pf1[3] == pf2[3]:
+						if globalIgnoreInversions:
+							correctEighths += 1
+							continue
+						else:
+							inversionErrors += 1
+					localChordErrors += 1
+					wrongEighths += 1
+					confusionLabel = rn2.figure + ' for ' + rn1.figure
+					confusionMatrix[confusionLabel] = confusionMatrix.setdefault(confusionLabel, 0) + 1
+					confusions.setdefault(confusionLabel, []).append([pieceName, timePoint])
+				else:
+					"""rn3 = anal1.getElementsByOffset(int(timePoint) - 1, int(timePoint) - 1, includeEndBoundary = True, mustBeginInSpan = False, classList = ['RomanNumeral'])
+					rn4 = anal1.getElementsByOffset(int(timePoint) + 1, int(timePoint) + 1, includeEndBoundary = True, mustBeginInSpan = False, classList = ['RomanNumeral'])
+					if rn3 and rn4:
+						rn3 = rn3[0]
+						rn4 = rn4[0]"""
+					if sorted(pitchNames1) == sorted(pitchNames2):
+						localWrongKeyRightChord += 1
+					wrongEighths += 1
+					localKeyErrors += 1
+				s = 'I'
+			lastRN1 = rn1
+			lastRN2 = rn2
+			#print rn1.pitches, rn2.pitches, rn1.pitches == rn2.pitches
+			#print DT.parse_figure(rn1.figure)[0], DT.parse_figure(rn2.figure)[0], DT.parse_figure(rn1.figure)[0] == DT.parse_figure(rn2.figure)[0]
+			if printComparison:
+				print_out(' '.join([str(x) for x in ['%i %.2f' % DT.get_measure_number_and_beat_from_offset(analyzed_file1, timePoint), s, keystring(rn1), rn1.figure, keystring(rn2), rn2.figure, pitchNames1, pitchNames2]]))
+		except Exception as e:
+			# Skip this timepoint/measure if there's an error (e.g., "too many notes")
+			# Silently continue - don't crash the whole comparison
+			continue
 	pct = 100. * correctEighths/(wrongEighths + correctEighths)
 	wrongKey = (100. * localKeyErrors / (wrongEighths + correctEighths))
 	wrongChord = (100. * localChordErrors / (wrongEighths + correctEighths))

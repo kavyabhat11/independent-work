@@ -566,6 +566,37 @@ print("\nFreezing frozen_model parameters...")
 for param in model.frozen_model.parameters():
     param.requires_grad = False
 
+# DEBUG: Print ALL parameter names to understand structure
+print("\n" + "="*70)
+print("DEBUGGING: Inspecting model.frozen_model parameter names")
+print("="*70)
+all_frozen_params = list(model.frozen_model.named_parameters())
+print(f"Total frozen_model parameters: {len(all_frozen_params)}\n")
+
+# Group by prefix to see structure
+from collections import defaultdict
+param_groups = defaultdict(list)
+for name, _ in all_frozen_params:
+    # Get top-level prefix (before first dot)
+    prefix = name.split('.')[0] if '.' in name else name
+    param_groups[prefix].append(name)
+
+print("Parameter groups (by top-level prefix):")
+for prefix, params in sorted(param_groups.items()):
+    print(f"  {prefix}: {len(params)} parameters")
+    # Show first 3 and last 3 in this group
+    if len(params) <= 6:
+        for p in params:
+            print(f"    - {p}")
+    else:
+        for p in params[:3]:
+            print(f"    - {p}")
+        print(f"    ... ({len(params) - 6} more)")
+        for p in params[-3:]:
+            print(f"    - {p}")
+
+print("\n" + "="*70 + "\n")
+
 # OPTIONAL: Unfreeze last few layers for better adaptation
 # Set UNFREEZE_LAST_N_LAYERS to 0 to keep fully frozen (current behavior)
 # Set to 2-3 to allow last layers to adapt to Mozart annotation style

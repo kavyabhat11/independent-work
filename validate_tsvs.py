@@ -124,7 +124,10 @@ def validate_tsv_quality(tsv_dir):
     for deg, count in deg2_counts.most_common(10):
         print(f"  {deg}: {count}")
     non_none = sum(1 for d in all_degree2 if d != 'None')
-    print(f"  → Applied chords (degree2 != None): {non_none}/{len(all_degree2)} ({100*non_none/len(all_degree2):.1f}%)")
+    if len(all_degree2) > 0:
+        print(f"  → Applied chords (degree2 != None): {non_none}/{len(all_degree2)} ({100*non_none/len(all_degree2):.1f}%)")
+    else:
+        print(f"  → Applied chords (degree2 != None): 0/0")
 
     print(f"\nHarmonic Rhythm:")
     hr_counts = Counter(all_harmonic_rhythm)
