@@ -205,20 +205,28 @@ def main():
     # Infer task dimensions from checkpoint heads
     tasks_from_ckpt = {}
     for key in state_dict.keys():
-        # Look for classifier heads: frozen_model.classifier.classifier.<task>.layers.1.weight
-        # or classifier.classifier.<task>.layers.1.weight
-        if ".classifier." in key and ".layers.1.weight" in key:
+        # Look for classifier heads: <prefix>.classifier.<task>.layers.1.weight
+        # Examples:
+        #   frozen_model.classifier.classifier.romanNumeral.layers.1.weight
+        #   classifier.classifier.romanNumeral.layers.1.weight
+        #   classifier.romanNumeral.layers.1.weight
+        if "classifier." in key and ".layers.1.weight" in key:
             parts = key.split(".")
-            if "classifier" in parts:
-                idx = parts.index("classifier")
-                if idx + 1 < len(parts):
-                    task_name = parts[idx + 1]
-                    out_dim = state_dict[key].shape[0]
-                    tasks_from_ckpt[task_name] = out_dim
+            # Find the last "classifier" occurrence, task name is right after
+            for i in range(len(parts) - 1, -1, -1):
+                if parts[i] == "classifier" and i + 1 < len(parts):
+                    task_name = parts[i + 1]
+                    if task_name != "classifier" and task_name != "layers":
+                        out_dim = state_dict[key].shape[0]
+                        tasks_from_ckpt[task_name] = out_dim
+                        break
 
-    print("✓ Tasks inferred from checkpoint:")
-    for task, dim in tasks_from_ckpt.items():
+    print("✓ Tasks inferred from checkpoint ({} tasks):".format(len(tasks_from_ckpt)))
+    for task, dim in sorted(tasks_from_ckpt.items()):
         print("  {}: {}".format(task, dim))
+
+    if len(tasks_from_ckpt) == 0:
+        raise RuntimeError("Could not detect any tasks from checkpoint! Check key names.")
 
     num_tasks_actual = len(tasks_from_ckpt)
     print("✓ num_tasks = {}".format(num_tasks_actual))
@@ -313,6 +321,10 @@ def main():
     correct_by_task = defaultdict(int)
     total_by_task = defaultdict(int)
 
+    # CSR (Chord Symbol Recognition): root + quality + inversion all correct
+    csr_correct = 0
+    csr_total = 0
+
     # RNalt: romanNumeral + localkey + inversion all correct
     rnalt_correct = 0
     rnalt_total = 0
@@ -361,8 +373,27 @@ def main():
                 correct_by_task[tname] += c
                 total_by_task[tname] += tot
 
-            # Compute RNalt (romanNumeral + localkey + inversion)
-            if all(k in preds for k in ("romanNumeral", "localkey", "inversion")):
+            # Compute CSR (root + quality + inversion)
+            if all(k in preds for k in ("root", "quality", "inversion")) and \
+               all(k in TASK_ORDER for k in ("root", "quality", "inversion")):
+                r_pred = preds["root"].argmax(dim=-1)
+                q_pred = preds["quality"].argmax(dim=-1)
+                i_pred = preds["inversion"].argmax(dim=-1)
+
+                r_t = align_target_to_pred_length(labels[:, TASK_ORDER.index("root")].long().to(device), r_pred.shape[0], onset_idx)
+                q_t = align_target_to_pred_length(labels[:, TASK_ORDER.index("quality")].long().to(device), q_pred.shape[0], onset_idx)
+                i_t = align_target_to_pred_length(labels[:, TASK_ORDER.index("inversion")].long().to(device), i_pred.shape[0], onset_idx)
+
+                mask = (r_t >= 0) & (q_t >= 0) & (i_t >= 0)
+                tot = int(mask.sum().item())
+                if tot > 0:
+                    corr = int(((r_pred == r_t) & (q_pred == q_t) & (i_pred == i_t) & mask).sum().item())
+                    csr_correct += corr
+                    csr_total += tot
+
+            # Compute RNalt (romanNumeral + localkey + inversion) - only if romanNumeral exists
+            if all(k in preds for k in ("romanNumeral", "localkey", "inversion")) and \
+               all(k in TASK_ORDER for k in ("romanNumeral", "localkey", "inversion")):
                 rn_pred = preds["romanNumeral"].argmax(dim=-1)
                 lk_pred = preds["localkey"].argmax(dim=-1)
                 inv_pred = preds["inversion"].argmax(dim=-1)
@@ -379,7 +410,8 @@ def main():
                     rnalt_total += tot
 
             # Compute Val RomNum (degree1+degree2+quality+root+inversion+localkey)
-            if all(k in preds for k in ("degree1", "degree2", "quality", "root", "inversion", "localkey")):
+            if all(k in preds for k in ("degree1", "degree2", "quality", "root", "inversion", "localkey")) and \
+               all(k in TASK_ORDER for k in ("degree1", "degree2", "quality", "root", "inversion", "localkey")):
                 d1_pred = preds["degree1"].argmax(dim=-1)
                 d2_pred = preds["degree2"].argmax(dim=-1)
                 q_pred = preds["quality"].argmax(dim=-1)
@@ -416,17 +448,24 @@ def main():
             print("{:14s}: {:7.2f}% ({}/{})".format(tname, acc, correct_by_task[tname], tot))
 
     print("\nComposite metrics:")
+    if csr_total > 0:
+        csr_acc = 100.0 * csr_correct / csr_total
+        print("CSR (root+quality+inversion):              {:.2f}% ({}/{})".format(csr_acc, csr_correct, csr_total))
+        print("  ↳ This is the standard ChordGNN paper metric - compare with their reported results")
+    else:
+        print("CSR: n/a (tasks not available)")
+
     if rnalt_total > 0:
         rnalt_acc = 100.0 * rnalt_correct / rnalt_total
-        print("RNalt (romanNumeral+localkey+inversion): {:.2f}% ({}/{})".format(rnalt_acc, rnalt_correct, rnalt_total))
+        print("RNalt (romanNumeral+localkey+inversion):   {:.2f}% ({}/{})".format(rnalt_acc, rnalt_correct, rnalt_total))
     else:
-        print("RNalt: n/a (total=0)")
+        print("RNalt: n/a (romanNumeral task not available)")
 
     if romnum_total > 0:
         romnum_acc = 100.0 * romnum_correct / romnum_total
-        print("Val RomNum (all 5 components):           {:.2f}% ({}/{})".format(romnum_acc, romnum_correct, romnum_total))
+        print("Val RomNum (degree1+degree2+quality+root+inversion+localkey): {:.2f}% ({}/{})".format(romnum_acc, romnum_correct, romnum_total))
     else:
-        print("Val RomNum: n/a (total=0)")
+        print("Val RomNum: n/a (not all required tasks available)")
 
     # Sanity check: warn if any tasks have suspiciously low totals
     print("\nSanity check - label totals per task:")
