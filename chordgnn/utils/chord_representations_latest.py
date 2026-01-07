@@ -2021,7 +2021,17 @@ def TransposePitch(pitch, interval):
     if duple in _transposePitch:
         return _transposePitch[duple]
     pitchObj = m21Pitch(pitch)
-    transposed = pitchObj.transpose(interval).nameWithOctave
+    transposedPitch = pitchObj.transpose(interval)
+
+    # Simplify enharmonics to avoid triple sharps/flats
+    # The vocabulary only supports up to double sharps (##) and double flats (--)
+    if transposedPitch.accidental is not None:
+        alter = transposedPitch.accidental.alter
+        # If we have triple sharps/flats or more, use simplifyEnharmonic
+        if abs(alter) > 2:
+            transposedPitch = transposedPitch.getEnharmonic()
+
+    transposed = transposedPitch.nameWithOctave
     _transposePitch[duple] = transposed
     return transposed
 

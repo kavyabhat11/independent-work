@@ -8,6 +8,7 @@ FIXED VERSION - Properly encodes:
 - Degree2 for applied chords
 - Harmonic rhythm from annotation durations
 - PCset from actual notes in score
+- Vocabulary validation to ensure all values are in ChordGNN vocab
 """
 
 import os
@@ -26,6 +27,21 @@ except Exception:
     m21roman = None
     m21key = None
     m21pitch = None
+
+# ChordGNN vocabularies
+try:
+    from chordgnn.utils.chord_representations_latest import (
+        RomanNumeral31, ChordQuality11, LocalKey38, TonicizedKey38, PitchClassSet121
+    )
+    VALID_ROMAN_NUMERALS = set(RomanNumeral31.classList)
+    VALID_QUALITIES = set(ChordQuality11.classList)
+    VALID_KEYS = set(LocalKey38.classList)
+    VALID_PCSETS = set(PitchClassSet121.classList)
+except Exception:
+    VALID_ROMAN_NUMERALS = None
+    VALID_QUALITIES = None
+    VALID_KEYS = None
+    VALID_PCSETS = None
 
 
 REAL_TSV_COLUMNS = [
@@ -459,7 +475,11 @@ def realize_roman_numeral(roman_str: str, local_key_tok: str, midi_pitches: list
     Returns a dict matching needed a_* fields.
 
     FIXED: Uses actual notes from score for voices and pcset.
+    FIXED: Preserves original roman numeral with inversions for music21 parsing.
     """
+    # Extract inversion BEFORE simplifying
+    original_roman = roman_str
+
     # Simplify to 31-class vocab
     base_rn, tonkey = simplify_roman_numeral_to_31class(roman_str)
 
@@ -506,7 +526,19 @@ def realize_roman_numeral(roman_str: str, local_key_tok: str, midi_pitches: list
     # Use the tonicized key for music21 RomanNumeral parsing
     kobj = key_token_to_music21_key(tonicized_key_tok)
     try:
-        rn = m21roman.RomanNumeral(base_rn, kobj)
+        # CRITICAL FIX: Use original_roman (with inversions) not base_rn (stripped)
+        # But we need to remove secondary dominant parts like "/ii" while keeping figured bass like "6/4"
+        # Strategy: Remove everything starting from the LAST slash that has a Roman numeral after it
+        import re
+        chord_part = original_roman
+        # Match pattern like "/V" or "/ii" at the end (secondary dominants)
+        # but NOT figured bass like "6/4" or "6/5"
+        match = re.search(r'/([ivxIVX#]+|bII)$', original_roman)
+        if match:
+            # This is a secondary dominant, remove the "/X" part
+            chord_part = original_roman[:match.start()]
+
+        rn = m21roman.RomanNumeral(chord_part, kobj)
 
         # Pitch names
         pitch_names = tuple(p.name.replace('b', '-') for p in rn.pitches)

@@ -447,13 +447,31 @@ def main():
                 rnalt_onset_acc = ((rn_pred == rn_t) & (lk_pred == lk_t) & (inv_pred == inv_t) & mask).float()
 
                 # Get onset times from onset_div (the actual onset times from the graph)
-                # onset_div contains the onset times for each frame
+                # onset_div is in MIDI divisions (ticks), need to convert to quarter notes
                 if onset_idx is not None and len(onset_idx) > 0:
                     # onset_idx tells us which frames are onsets
                     # Use onset_div to get the actual times
                     onset_idx_flat = onset_idx.view(-1).long()
                     if onset_idx_flat.max() < len(onset_div):
-                        onset_times = onset_div[onset_idx_flat].cpu().numpy()
+                        onset_times_divisions = onset_div[onset_idx_flat].cpu().numpy()
+
+                        # Convert from MIDI divisions to quarter notes
+                        # Infer divisions_per_quarter from the data
+                        # Common values: 480 or 960
+                        # Strategy: check if typical onset gaps make sense
+                        if len(onset_times_divisions) > 1:
+                            typical_gap = np.median(np.diff(onset_times_divisions))
+                            # If typical gap is ~480, likely 480 ppq. If ~240, likely 960 ppq, etc.
+                            if typical_gap > 400:
+                                divisions_per_quarter = 480
+                            elif typical_gap > 200:
+                                divisions_per_quarter = 240
+                            else:
+                                divisions_per_quarter = 960
+                        else:
+                            divisions_per_quarter = 480  # Default guess
+
+                        onset_times = onset_times_divisions / divisions_per_quarter
 
                         # Ensure lengths match
                         min_len = min(len(rnalt_onset_acc), len(onset_times))
