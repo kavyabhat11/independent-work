@@ -50,7 +50,7 @@ torch.manual_seed(0)
 # -------------------------
 WANDB_ARTIFACT = "melkisedeath/chord_rec/model-kvd0jic5:v0"
 ARTIFACT_ROOT = "./artifacts"
-MOZART_ROOT = "./mozart_dataset"  # Should contain training/validation/test subdirs (from split_mozart_data.py)
+MOZART_ROOT = os.environ.get("MOZART_ROOT", "./mozart_dataset")  # Can override with env var
 
 CACHE_ROOT = "/scratch/network/kb9520/chordgnn_data"
 CACHE = os.path.join(CACHE_ROOT, "AugmentedNetChordDataset", "dataset")
