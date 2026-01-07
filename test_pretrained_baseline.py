@@ -364,14 +364,10 @@ def main():
     correct_by_task = defaultdict(int)
     total_by_task = defaultdict(int)
 
-    # CSR (Chord Symbol Recognition): root + quality + inversion all correct
-    # Need to track onset-level accuracy and onset times for time-step conversion
-    csr_onset_acc_all = []  # List of numpy arrays (one per graph)
-    csr_onset_times_all = []  # List of numpy arrays (one per graph)
-
     # RNalt: romanNumeral + localkey + inversion all correct
-    rnalt_correct = 0
-    rnalt_total = 0
+    # Track onset-level accuracy and onset times for time-weighted CSR
+    rnalt_onset_acc_all = []  # List of numpy arrays (one per graph)
+    rnalt_onset_times_all = []  # List of numpy arrays (one per graph)
 
     # Val RomNum: degree1 + degree2 + quality + root + inversion + localkey all correct
     romnum_correct = 0
@@ -417,40 +413,8 @@ def main():
                 correct_by_task[tname] += c
                 total_by_task[tname] += tot
 
-            # Compute CSR (root + quality + inversion)
-            # Store onset-level accuracy for time-step conversion
-            if all(k in preds for k in ("root", "quality", "inversion")) and \
-               all(k in TASK_ORDER for k in ("root", "quality", "inversion")):
-                r_pred = preds["root"].argmax(dim=-1)
-                q_pred = preds["quality"].argmax(dim=-1)
-                i_pred = preds["inversion"].argmax(dim=-1)
-
-                r_t = align_target_to_pred_length(labels[:, TASK_ORDER.index("root")].long().to(device), r_pred.shape[0], onset_idx)
-                q_t = align_target_to_pred_length(labels[:, TASK_ORDER.index("quality")].long().to(device), q_pred.shape[0], onset_idx)
-                i_t = align_target_to_pred_length(labels[:, TASK_ORDER.index("inversion")].long().to(device), i_pred.shape[0], onset_idx)
-
-                mask = (r_t >= 0) & (q_t >= 0) & (i_t >= 0)
-                # Per-onset accuracy (1.0 if correct, 0.0 if wrong)
-                csr_onset_acc = ((r_pred == r_t) & (q_pred == q_t) & (i_pred == i_t) & mask).float()
-
-                # Need onset times - extract from labels if available
-                if len(labels.shape) > 1 and labels.shape[1] > 14:
-                    # labels has onset column (15th column)
-                    onset_times_raw = labels[:, 14].cpu().numpy()
-                    # Align to pred length
-                    if onset_idx is not None:
-                        onset_idx_flat = onset_idx.view(-1).long().cpu().numpy()
-                        if len(onset_idx_flat) == len(csr_onset_acc):
-                            onset_times = onset_times_raw[onset_idx_flat]
-                        else:
-                            onset_times = onset_times_raw[:len(csr_onset_acc)]
-                    else:
-                        onset_times = onset_times_raw[:len(csr_onset_acc)]
-
-                    csr_onset_acc_all.append(csr_onset_acc.cpu().numpy())
-                    csr_onset_times_all.append(onset_times)
-
-            # Compute RNalt (romanNumeral + localkey + inversion) - only if romanNumeral exists
+            # Compute RNalt (romanNumeral + localkey + inversion)
+            # Store onset-level accuracy for time-weighted CSR computation
             if all(k in preds for k in ("romanNumeral", "localkey", "inversion")) and \
                all(k in TASK_ORDER for k in ("romanNumeral", "localkey", "inversion")):
                 rn_pred = preds["romanNumeral"].argmax(dim=-1)
@@ -462,11 +426,25 @@ def main():
                 inv_t = align_target_to_pred_length(labels[:, TASK_ORDER.index("inversion")].long().to(device), inv_pred.shape[0], onset_idx)
 
                 mask = (rn_t >= 0) & (lk_t >= 0) & (inv_t >= 0)
-                tot = int(mask.sum().item())
-                if tot > 0:
-                    corr = int(((rn_pred == rn_t) & (lk_pred == lk_t) & (inv_pred == inv_t) & mask).sum().item())
-                    rnalt_correct += corr
-                    rnalt_total += tot
+                # Per-onset accuracy (1.0 if correct, 0.0 if wrong)
+                rnalt_onset_acc = ((rn_pred == rn_t) & (lk_pred == lk_t) & (inv_pred == inv_t) & mask).float()
+
+                # Need onset times - extract from labels if available
+                if len(labels.shape) > 1 and labels.shape[1] > 14:
+                    # labels has onset column (15th column)
+                    onset_times_raw = labels[:, 14].cpu().numpy()
+                    # Align to pred length
+                    if onset_idx is not None:
+                        onset_idx_flat = onset_idx.view(-1).long().cpu().numpy()
+                        if len(onset_idx_flat) == len(rnalt_onset_acc):
+                            onset_times = onset_times_raw[onset_idx_flat]
+                        else:
+                            onset_times = onset_times_raw[:len(rnalt_onset_acc)]
+                    else:
+                        onset_times = onset_times_raw[:len(rnalt_onset_acc)]
+
+                    rnalt_onset_acc_all.append(rnalt_onset_acc.cpu().numpy())
+                    rnalt_onset_times_all.append(onset_times)
 
             # Compute Val RomNum (degree1+degree2+quality+root+inversion+localkey)
             if all(k in preds for k in ("degree1", "degree2", "quality", "root", "inversion", "localkey")) and \
@@ -507,29 +485,23 @@ def main():
             print("{:14s}: {:7.2f}% ({}/{})".format(tname, acc, correct_by_task[tname], tot))
 
     print("\nComposite metrics:")
-    if len(csr_onset_acc_all) > 0 and len(csr_onset_times_all) > 0:
+    if len(rnalt_onset_acc_all) > 0 and len(rnalt_onset_times_all) > 0:
         # Concatenate all onset accuracies and times
         import numpy as np
-        all_csr_acc = np.concatenate(csr_onset_acc_all)
-        all_csr_times = np.concatenate(csr_onset_times_all)
+        all_rnalt_acc = np.concatenate(rnalt_onset_acc_all)
+        all_rnalt_times = np.concatenate(rnalt_onset_times_all)
 
-        # Compute time-weighted CSR (divides into 1/32 note segments)
-        csr_time_weighted = acc_compute_time_step(all_csr_acc, all_csr_times)
-        print("CSR (root+quality+inversion, time-weighted):   {:.2f}%".format(csr_time_weighted * 100.0))
-        print("  ↳ This is the standard ChordGNN paper metric - compare with their reported results")
+        # Compute time-weighted CSR for RNalt (divides into 1/32 note segments)
+        csr_time_weighted = acc_compute_time_step(all_rnalt_acc, all_rnalt_times)
+        print("CSR (romanNumeral+localkey+inversion, time-weighted): {:.2f}%".format(csr_time_weighted * 100.0))
+        print("  ↳ This is the time-weighted RNalt metric")
         print("  ↳ Divides time into 1/32 note segments, computes proportion of time correct")
 
         # Also show onset-level for comparison
-        onset_csr = all_csr_acc.mean() * 100.0
-        print("CSR (onset-level, for comparison):            {:.2f}%".format(onset_csr))
+        onset_rnalt = all_rnalt_acc.mean() * 100.0
+        print("RNalt (onset-level, for comparison):                 {:.2f}%".format(onset_rnalt))
     else:
-        print("CSR: n/a (tasks not available)")
-
-    if rnalt_total > 0:
-        rnalt_acc = 100.0 * rnalt_correct / rnalt_total
-        print("RNalt (romanNumeral+localkey+inversion):   {:.2f}% ({}/{})".format(rnalt_acc, rnalt_correct, rnalt_total))
-    else:
-        print("RNalt: n/a (romanNumeral task not available)")
+        print("CSR/RNalt: n/a (romanNumeral task not available)")
 
     if romnum_total > 0:
         romnum_acc = 100.0 * romnum_correct / romnum_total
