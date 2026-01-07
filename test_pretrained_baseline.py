@@ -429,20 +429,22 @@ def main():
                 # Per-onset accuracy (1.0 if correct, 0.0 if wrong)
                 rnalt_onset_acc = ((rn_pred == rn_t) & (lk_pred == lk_t) & (inv_pred == inv_t) & mask).float()
 
-                # Need onset times - extract from labels if available
-                if len(labels.shape) > 1 and labels.shape[1] > 14:
-                    # labels has onset column (15th column)
-                    onset_times_raw = labels[:, 14].cpu().numpy()
-                    # Align to pred length
-                    if onset_idx is not None:
-                        onset_idx_flat = onset_idx.view(-1).long().cpu().numpy()
-                        if len(onset_idx_flat) == len(rnalt_onset_acc):
-                            onset_times = onset_times_raw[onset_idx_flat]
-                        else:
-                            onset_times = onset_times_raw[:len(rnalt_onset_acc)]
-                    else:
-                        onset_times = onset_times_raw[:len(rnalt_onset_acc)]
+                # Get onset times from onset_div (the actual onset times from the graph)
+                # onset_div contains the onset times for each frame
+                if onset_idx is not None and len(onset_idx) > 0:
+                    # onset_idx tells us which frames are onsets
+                    # Use onset_div to get the actual times
+                    onset_idx_flat = onset_idx.view(-1).long()
+                    if onset_idx_flat.max() < len(onset_div):
+                        onset_times = onset_div[onset_idx_flat].cpu().numpy()
 
+                        # Ensure lengths match
+                        min_len = min(len(rnalt_onset_acc), len(onset_times))
+                        rnalt_onset_acc_all.append(rnalt_onset_acc[:min_len].cpu().numpy())
+                        rnalt_onset_times_all.append(onset_times[:min_len])
+                else:
+                    # Fallback: just use frame indices as "times"
+                    onset_times = torch.arange(len(rnalt_onset_acc)).float().cpu().numpy()
                     rnalt_onset_acc_all.append(rnalt_onset_acc.cpu().numpy())
                     rnalt_onset_times_all.append(onset_times)
 
