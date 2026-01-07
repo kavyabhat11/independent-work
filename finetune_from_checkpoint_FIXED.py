@@ -11,9 +11,9 @@ It also:
 - Detects DATA_VERSION from ckpt romanNumeral head (31 -> v2.0.0, 76 -> v1.0.0)
 - Forces n_hidden=256 if ckpt heads imply 256 (yours do)
 - Splits train/val/test by matching graph.name to MOZART_ROOT split filenames
-- Freezes frozen_model by default, then unfreezes last 1 GCN layer + GRU/projections
+- Freezes frozen_model by default, then unfreezes ONLY last 1 GCN layer + GRU
   (model has only 2 total GCN layers; unfreezing both = full fine-tuning)
-  (set UNFREEZE_LAST_N_GCN_LAYERS=0 to freeze all encoder layers)
+  (set UNFREEZE_LAST_N_GCN_LAYERS=0 and UNFREEZE_GRU=False to freeze all encoder layers)
 
 Run:
   export MOZART_ROOT=/path/to/mozart_dataset   # contains training/validation/test/*.tsv
@@ -546,42 +546,16 @@ def main():
         else:
             print("⚠ Could not find encoder to unfreeze GCN layers")
 
-    # Unfreeze GRU and final projection layers if requested
+    # Unfreeze GRU layer only (not projection layers)
     if UNFREEZE_GRU:
         encoder = model.frozen_model.encoder
-        parts_unfrozen = []
 
-        # Unfreeze GRU
+        # Unfreeze GRU only
         if hasattr(encoder, 'gru'):
             for p in encoder.gru.parameters():
                 p.requires_grad = True
-            parts_unfrozen.append("GRU")
-
-        # Unfreeze final projection layers
-        if hasattr(encoder, 'proj1'):
-            for p in encoder.proj1.parameters():
-                p.requires_grad = True
-            parts_unfrozen.append("proj1")
-
-        if hasattr(encoder, 'proj2'):
-            for p in encoder.proj2.parameters():
-                p.requires_grad = True
-            parts_unfrozen.append("proj2")
-
-        # Unfreeze layer norms
-        if hasattr(encoder, 'layernorm1'):
-            for p in encoder.layernorm1.parameters():
-                p.requires_grad = True
-        if hasattr(encoder, 'layernorm2'):
-            for p in encoder.layernorm2.parameters():
-                p.requires_grad = True
-        if hasattr(encoder, 'layernormgru'):
-            for p in encoder.layernormgru.parameters():
-                p.requires_grad = True
-
-        if parts_unfrozen:
-            unfrozen_parts.append(", ".join(parts_unfrozen))
-            print(f"✓ Unfroze GRU and projection layers: {', '.join(parts_unfrozen)}")
+            unfrozen_parts.append("GRU")
+            print(f"✓ Unfroze GRU layer")
 
     if not unfrozen_parts:
         print("✓ All encoder layers remain frozen (only training task heads)")
