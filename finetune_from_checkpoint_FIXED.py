@@ -158,6 +158,10 @@ print(f"  dropout:      {pretrained_dropout}")
 print(f"  use_nade:     {pretrained_use_nade}")
 print(f"  use_jk:       {pretrained_use_jk}")
 print(f"  use_rotograd: {pretrained_use_rotograd}")
+
+print(f"\nPretrained training hyperparameters:")
+print(f"  lr:           {pretrained_hparams.get('lr', 'NOT FOUND')}")
+print(f"  weight_decay: {pretrained_hparams.get('weight_decay', 'NOT FOUND')}")
 print()
 
 
