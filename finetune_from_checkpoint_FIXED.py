@@ -50,18 +50,19 @@ torch.manual_seed(0)
 # -------------------------
 WANDB_ARTIFACT = "melkisedeath/chord_rec/model-kvd0jic5:v0"
 ARTIFACT_ROOT = "./artifacts"
-MOZART_ROOT = os.environ.get("MOZART_ROOT", "./mozart_dataset")  # Can override with env var
+MOZART_ROOT = os.environ.get("MOZART_ROOT", "./mozart_dataset_final")  # Can override with env var
 
 CACHE_ROOT = "/scratch/network/kb9520/chordgnn_data"
 CACHE = os.path.join(CACHE_ROOT, "AugmentedNetChordDataset", "dataset")
 
-# Learning rate for training new head (encoder is frozen)
-# Since the head is randomly initialized and encoder is frozen, use training-from-scratch LR
-# Original ChordGNN used 1.5e-3, using 1e-3 as middle ground for smaller dataset
-LR = 1e-3  # Balanced: faster than 5e-4, safer than original 1.5e-3
+# Learning rate for finetuning pretrained heads
+# CRITICAL: Heads are loaded from pretrained (40-50% accuracy), NOT random!
+# Use MUCH lower LR to preserve pretrained knowledge and gently adapt to Mozart data
+# Too high LR (1e-3) causes catastrophic forgetting - pretrained weights get destroyed
+LR = 5e-5  # Very low to preserve pretrained heads (was 1e-3, too high!)
 WEIGHT_DECAY = 1e-4
 
-MAX_EPOCHS = 40
+MAX_EPOCHS = 80  # Increased from 40 since lower LR needs more time
 BATCH_SIZE = 4
 NUM_WORKERS = 8
 NUM_TASKS = 11
@@ -541,7 +542,29 @@ else:
 print("\nFreezing frozen_model parameters...")
 for param in model.frozen_model.parameters():
     param.requires_grad = False
-print("✓ frozen_model is now frozen (non-trainable)")
+
+# OPTIONAL: Unfreeze last few layers for better adaptation
+# Set UNFREEZE_LAST_N_LAYERS to 0 to keep fully frozen (current behavior)
+# Set to 2-3 to allow last layers to adapt to Mozart annotation style
+UNFREEZE_LAST_N_LAYERS = 3  # Unfreeze last 3 layers to adapt to Mozart style
+
+if UNFREEZE_LAST_N_LAYERS > 0:
+    # Get all named parameters in the encoder
+    encoder_params = list(model.frozen_model.named_parameters())
+    total_layers = len(encoder_params)
+
+    # Unfreeze the last N layers
+    unfrozen_layers = []
+    for name, param in encoder_params[-UNFREEZE_LAST_N_LAYERS:]:
+        param.requires_grad = True
+        unfrozen_layers.append(name)
+
+    print(f"✓ Unfroze last {UNFREEZE_LAST_N_LAYERS} encoder layers:")
+    for name in unfrozen_layers:
+        print(f"  - {name}")
+    print(f"✓ Remaining {total_layers - UNFREEZE_LAST_N_LAYERS} layers frozen")
+else:
+    print("✓ frozen_model is fully frozen (non-trainable)")
 
 # Check if important task heads loaded
 important_heads = ["romanNumeral", "localkey", "tonkey", "pcset", "bass"]
