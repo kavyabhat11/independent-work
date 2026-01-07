@@ -169,10 +169,10 @@ def acc_compute_time_step(acc_onset_level, onset_times):
 
     for i in range(1, len(df)):
         onset_diff = int((df["onset"][i] - df["onset"][i - 1]) / 0.125) - 1
-        row = df.iloc[i - 1]
+        row_data = {"onset": df.iloc[i - 1]["onset"], "acc": df.iloc[i - 1]["acc"]}
         for j in range(onset_diff):
-            row["onset"] = row["onset"] + 0.125
-            dfout = dfout.append(row, ignore_index=True)
+            row_data["onset"] = row_data["onset"] + 0.125
+            dfout = pd.concat([dfout, pd.DataFrame([row_data])], ignore_index=True)
 
     dfout.sort_values(by="onset", inplace=True)
     return dfout["acc"].to_numpy().mean()
