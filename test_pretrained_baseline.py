@@ -139,17 +139,20 @@ def collate_fn_test(batch):
     labels = labels.squeeze(0) if labels.ndim == 4 else labels
     if labels.ndim == 3 and labels.shape[-1] == 1:
         labels = labels.squeeze(-1)
-    if labels.ndim != 2 or labels.shape[1] < len(TASK_ORDER):
+    if labels.ndim != 2 or labels.shape[1] < 15:
         raise RuntimeError("Unexpected labels shape: {} for {}".format(tuple(labels.shape), name))
 
+    # First 14 columns are the tasks
     label_mat = labels[:, :len(TASK_ORDER)]
     labels_dict = {task: label_mat[:, i].long() for i, task in enumerate(TASK_ORDER)}
+
+    # 15th column (index 14) is "onset" - needed by test_step
+    labels_dict["onset"] = labels[:, 14].long()
 
     # Add reverse edges
     edges, edge_type = add_reverse_edges_from_edge_index(edges, edge_type)
 
-    lengths = torch.tensor([label_mat.shape[0]]).long()
-    return x, edges, edge_type, labels_dict, onset_div, lengths
+    return x, edges, edge_type, labels_dict, onset_div, name
 
 
 def copy_all_test_tsvs_into_cache(mozart_root: str, cache_root: str, data_version: str) -> int:
