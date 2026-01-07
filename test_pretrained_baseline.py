@@ -37,25 +37,11 @@ ckpt = torch.load(PRETRAINED_CKPT, map_location="cpu")
 state_dict = ckpt.get("state_dict", {})
 pretrained_hparams = ckpt.get("hyper_parameters", {})
 
-# Detect version by looking for output layer (classifier weight)
-rn_vocab_size = None
-for k in state_dict.keys():
-    # Look for the final classifier layer for romanNumeral task
-    if "romanNumeral" in k and "classifier" in k and "weight" in k and "normalize" not in k:
-        tensor = state_dict[k]
-        if len(tensor.shape) >= 2:
-            # Output layer shape is [vocab_size, hidden_dim]
-            rn_vocab_size = tensor.shape[0]
-            print(f"  Found romanNumeral classifier: {k}, shape={list(tensor.shape)}")
-            break
-
-if rn_vocab_size is None:
-    print("  Could not detect vocab size from romanNumeral classifier")
-    print("  Defaulting to v2.0.0 (31 classes)")
-    rn_vocab_size = 31
-
-DATA_VERSION = "v2.0.0" if rn_vocab_size == 31 else "v1.0.0"
-print(f"✓ Detected vocab size: {rn_vocab_size} → using DATA_VERSION={DATA_VERSION}\n")
+# HARDCODED: We know from finetuning script it's 31 classes
+# Auto-detection was picking up hidden layers (256) instead of vocab size (31)
+rn_vocab_size = 31
+DATA_VERSION = "v2.0.0"
+print(f"✓ Using DATA_VERSION={DATA_VERSION} (31-class RomanNumeral vocab)\n")
 
 # Step 3: Prepare Mozart validation data
 print("Step 3: Preparing Mozart validation data...")
