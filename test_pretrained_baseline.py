@@ -425,13 +425,19 @@ def main():
         print("  {}".format(k))
 
     # Determine if this is a finetuned (PostChordPrediction) or base model
-    is_finetuned = any(k.startswith("frozen_model.") for k in state_dict.keys())
+    # PostChordPrediction has either:
+    #   - "frozen_model." prefix (newer checkpoints)
+    #   - "module.lstm" keys (pretrained checkpoint has PostProcessingMLTModel)
+    has_frozen_prefix = any(k.startswith("frozen_model.") for k in state_dict.keys())
+    has_module_lstm = any(k.startswith("module.lstm") for k in state_dict.keys())
+    is_finetuned = has_frozen_prefix or has_module_lstm
     has_module_prefix = any(k.startswith("module.") for k in state_dict.keys())
 
     print("\nModel type detection:")
-    print("  Has 'frozen_model.' prefix: {}".format(is_finetuned))
+    print("  Has 'frozen_model.' prefix: {}".format(has_frozen_prefix))
+    print("  Has 'module.lstm' keys:     {}".format(has_module_lstm))
     print("  Has 'module.' prefix:       {}".format(has_module_prefix))
-    print("  Detected model type:        {}".format("PostChordPrediction (finetuned)" if is_finetuned else "ChordPrediction (base)"))
+    print("  Detected model type:        {}".format("PostChordPrediction (with LSTM)" if is_finetuned else "ChordPrediction (base)"))
     print("="*35 + "\n")
 
     if is_finetuned or MODEL_TYPE == "post":
