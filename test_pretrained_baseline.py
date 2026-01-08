@@ -383,13 +383,18 @@ def main():
     total_by_task = defaultdict(int)
 
     # RNalt: romanNumeral + localkey + inversion all correct
-    # Track onset-level accuracy and onset times for time-weighted CSR
-    rnalt_onset_acc_all = []  # List of numpy arrays (one per graph)
-    rnalt_onset_times_all = []  # List of numpy arrays (one per graph)
+    # Track duration-weighted correctness (proper CSR)
+    rnalt_correct_time = 0.0  # Sum of durations where correct
+    rnalt_total_time = 0.0    # Sum of all durations
+    rnalt_onset_correct = 0   # Onset-level for comparison
+    rnalt_onset_total = 0
 
     # Val RomNum: degree1 + degree2 + quality + root + inversion + localkey all correct
     romnum_correct = 0
     romnum_total = 0
+
+    # One-time sanity check
+    first_batch_checked = False
 
     with torch.no_grad():
         for idx, batch in enumerate(loader):
@@ -411,14 +416,19 @@ def main():
             edges2, edge_type2 = add_reverse_edges_from_edge_index(edges, edge_type)
             onset_idx = unique_onsets(onset_div)
 
-            # Forward pass
-            if use_frozen:
-                # For finetuned models: frozen_model then module
-                x_encoded = model.frozen_model((x, edges2, edge_type2, onset_edges, onset_idx, None))
-                preds = model.module(x_encoded)
-            else:
-                # For base models: direct forward
-                preds = model.module((x, edges2, edge_type2, onset_edges, onset_idx, None))
+            # Forward pass - use model(...) not model.module(...)
+            out = model((x, edges2, edge_type2, onset_edges, onset_idx, None))
+            preds = out if isinstance(out, dict) else (out[0] if isinstance(out, (list, tuple)) else out)
+
+            # One-time sanity check
+            if not first_batch_checked:
+                print("\n=== SANITY CHECK ===")
+                print("Prediction keys:", sorted(preds.keys()))
+                print("TASK_ORDER:     ", TASK_ORDER)
+                print("Labels shape:   ", labels.shape)
+                print("Match:", set(preds.keys()) == set(TASK_ORDER[:len(preds.keys())]))
+                first_batch_checked = True
+                print("===================\n")
 
             # Compute per-task accuracy
             for t_i, tname in enumerate(TASK_ORDER):
@@ -432,7 +442,7 @@ def main():
                 total_by_task[tname] += tot
 
             # Compute RNalt (romanNumeral + localkey + inversion)
-            # Store onset-level accuracy for time-weighted CSR computation
+            # Duration-weighted CSR (correct method)
             if all(k in preds for k in ("romanNumeral", "localkey", "inversion")) and \
                all(k in TASK_ORDER for k in ("romanNumeral", "localkey", "inversion")):
                 rn_pred = preds["romanNumeral"].argmax(dim=-1)
@@ -444,46 +454,34 @@ def main():
                 inv_t = align_target_to_pred_length(labels[:, TASK_ORDER.index("inversion")].long().to(device), inv_pred.shape[0], onset_idx)
 
                 mask = (rn_t >= 0) & (lk_t >= 0) & (inv_t >= 0)
-                # Per-onset accuracy (1.0 if correct, 0.0 if wrong)
+                # Per-onset correctness (1.0 if correct, 0.0 if wrong)
                 rnalt_onset_acc = ((rn_pred == rn_t) & (lk_pred == lk_t) & (inv_pred == inv_t) & mask).float()
 
-                # Get onset times from onset_div (the actual onset times from the graph)
-                # onset_div is in MIDI divisions (ticks), need to convert to quarter notes
+                # Duration-weighted CSR computation (per piece)
                 if onset_idx is not None and len(onset_idx) > 0:
-                    # onset_idx tells us which frames are onsets
-                    # Use onset_div to get the actual times
                     onset_idx_flat = onset_idx.view(-1).long()
-                    if onset_idx_flat.max() < len(onset_div):
-                        onset_times_divisions = onset_div[onset_idx_flat].cpu().numpy()
+                    times = onset_div[onset_idx_flat].float()  # divisions, monotonic within piece
 
-                        # Convert from MIDI divisions to quarter notes
-                        # Infer divisions_per_quarter from the data
-                        # Common values: 480 or 960
-                        # Strategy: check if typical onset gaps make sense
-                        if len(onset_times_divisions) > 1:
-                            import numpy as np
-                            typical_gap = np.median(np.diff(onset_times_divisions))
-                            # If typical gap is ~480, likely 480 ppq. If ~240, likely 960 ppq, etc.
-                            if typical_gap > 400:
-                                divisions_per_quarter = 480
-                            elif typical_gap > 200:
-                                divisions_per_quarter = 240
-                            else:
-                                divisions_per_quarter = 960
-                        else:
-                            divisions_per_quarter = 480  # Default guess
+                    # Compute durations in divisions
+                    if times.numel() >= 2:
+                        dur = torch.diff(times)  # duration = next_onset - this_onset
+                        acc = rnalt_onset_acc[:dur.numel()]  # align to durations
+                        mask2 = mask[:dur.numel()]  # same mask
 
-                        onset_times = onset_times_divisions / divisions_per_quarter
+                        # Only count valid labels
+                        dur_valid = dur[mask2]
+                        acc_valid = acc[mask2]
 
-                        # Ensure lengths match
-                        min_len = min(len(rnalt_onset_acc), len(onset_times))
-                        rnalt_onset_acc_all.append(rnalt_onset_acc[:min_len].cpu().numpy())
-                        rnalt_onset_times_all.append(onset_times[:min_len])
-                else:
-                    # Fallback: just use frame indices as "times"
-                    onset_times = torch.arange(len(rnalt_onset_acc)).float().cpu().numpy()
-                    rnalt_onset_acc_all.append(rnalt_onset_acc.cpu().numpy())
-                    rnalt_onset_times_all.append(onset_times)
+                        # Accumulate duration-weighted correctness
+                        piece_correct_time = (acc_valid * dur_valid).sum().item()
+                        piece_total_time = dur_valid.sum().item()
+
+                        rnalt_correct_time += piece_correct_time
+                        rnalt_total_time += piece_total_time
+
+                # Also track onset-level for comparison
+                rnalt_onset_correct += int((rnalt_onset_acc * mask.float()).sum().item())
+                rnalt_onset_total += int(mask.sum().item())
 
             # Compute Val RomNum (degree1+degree2+quality+root+inversion+localkey)
             if all(k in preds for k in ("degree1", "degree2", "quality", "root", "inversion", "localkey")) and \
@@ -524,21 +522,17 @@ def main():
             print("{:14s}: {:7.2f}% ({}/{})".format(tname, acc, correct_by_task[tname], tot))
 
     print("\nComposite metrics:")
-    if len(rnalt_onset_acc_all) > 0 and len(rnalt_onset_times_all) > 0:
-        # Concatenate all onset accuracies and times
-        import numpy as np
-        all_rnalt_acc = np.concatenate(rnalt_onset_acc_all)
-        all_rnalt_times = np.concatenate(rnalt_onset_times_all)
-
-        # Compute time-weighted CSR for RNalt (divides into 1/32 note segments)
-        csr_time_weighted = acc_compute_time_step(all_rnalt_acc, all_rnalt_times)
-        print("CSR (romanNumeral+localkey+inversion, time-weighted): {:.2f}%".format(csr_time_weighted * 100.0))
-        print("  ↳ This is the time-weighted RNalt metric")
-        print("  ↳ Divides time into 1/32 note segments, computes proportion of time correct")
+    if rnalt_total_time > 0:
+        # Duration-weighted CSR (correct metric)
+        csr = 100.0 * rnalt_correct_time / rnalt_total_time
+        print("CSR (romanNumeral+localkey+inversion, duration-weighted): {:.2f}%".format(csr))
+        print("  ↳ This is the correct time-weighted RNalt CSR metric")
+        print("  ↳ Weights correctness by onset durations (divisions)")
 
         # Also show onset-level for comparison
-        onset_rnalt = all_rnalt_acc.mean() * 100.0
-        print("RNalt (onset-level, for comparison):                 {:.2f}%".format(onset_rnalt))
+        if rnalt_onset_total > 0:
+            onset_rnalt = 100.0 * rnalt_onset_correct / rnalt_onset_total
+            print("RNalt (onset-level, for comparison):                  {:.2f}%".format(onset_rnalt))
     else:
         print("CSR/RNalt: n/a (romanNumeral task not available)")
 
