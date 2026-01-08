@@ -18,25 +18,33 @@ parser.add_argument("--score_path", type=str, default="./artifacts/op20n3-04.mus
 args = parser.parse_args()
 
 
-artifact_dir = os.path.normpath(f"./artifacts/{os.path.basename(args.use_ckpt)}")
-# Check if artifact directory exists AND contains model.ckpt
-ckpt_path = os.path.join(artifact_dir, "model.ckpt")
-if not os.path.exists(ckpt_path):
-    print(f"Downloading artifact: {args.use_ckpt}")
-    import wandb
-    api = wandb.Api()
-    artifact = api.artifact(args.use_ckpt, type="model")
-    downloaded_dir = artifact.download(root="./artifacts")
-    print(f"Downloaded to: {downloaded_dir}")
+# Check if use_ckpt is a local file path or W&B artifact
+if os.path.exists(args.use_ckpt):
+    # Local checkpoint file
+    ckpt_path = args.use_ckpt
+    print(f"Using local checkpoint: {ckpt_path}")
+else:
+    # W&B artifact
+    artifact_dir = os.path.normpath(f"./artifacts/{os.path.basename(args.use_ckpt)}")
+    ckpt_path = os.path.join(artifact_dir, "model.ckpt")
 
-    # Find model.ckpt in downloaded directory
-    import glob
-    ckpt_files = glob.glob(os.path.join(downloaded_dir, "*.ckpt"))
-    if not ckpt_files:
-        raise FileNotFoundError(f"No .ckpt file found in {downloaded_dir}")
-    ckpt_path = ckpt_files[0]
-    artifact_dir = downloaded_dir
-    print(f"Using checkpoint: {ckpt_path}")
+    if not os.path.exists(ckpt_path):
+        print(f"Downloading artifact: {args.use_ckpt}")
+        import wandb
+        api = wandb.Api()
+        artifact = api.artifact(args.use_ckpt, type="model")
+        downloaded_dir = artifact.download(root="./artifacts")
+        print(f"Downloaded to: {downloaded_dir}")
+
+        # Find model.ckpt in downloaded directory
+        import glob
+        ckpt_files = glob.glob(os.path.join(downloaded_dir, "*.ckpt"))
+        if not ckpt_files:
+            raise FileNotFoundError(f"No .ckpt file found in {downloaded_dir}")
+        ckpt_path = ckpt_files[0]
+        print(f"Using checkpoint: {ckpt_path}")
+    else:
+        print(f"Using cached checkpoint: {ckpt_path}")
 
 tasks = {
     "localkey": 38, "tonkey": 38, "degree1": 22, "degree2": 22, "quality": 11, "inversion": 4,

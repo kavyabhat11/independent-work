@@ -699,6 +699,12 @@ def main():
         "unfreeze_last_n_gcn_layers": UNFREEZE_LAST_N_GCN_LAYERS,
         "unfreeze_specific_layer": UNFREEZE_SPECIFIC_LAYER,
         "unfreeze_gru": UNFREEZE_GRU,
+        "model_architecture": "PostChordPrediction",
+        "frozen_encoder": True,
+        "trainable_params": trainable_params,
+        "total_params": total_params,
+        "trainable_percent": round(100*trainable_params/total_params, 2),
+        "unfrozen_components": unfrozen_parts if unfrozen_parts else "none",
     })
     trainer.fit(model, datamodule)
 

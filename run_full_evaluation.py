@@ -17,7 +17,10 @@ import shutil
 
 # Checkpoint paths
 PRETRAINED_CKPT = "melkisedeath/chord_rec/model-kvd0jic5:v0"  # Original pretrained
-FINETUNED_CKPT = "kb9520-princeton-university/chord_rec/mozart-finetuned-model-FIXED:v1"  # Finetuned
+FINETUNED_CKPT = os.environ.get(
+    "FINETUNED_CKPT",
+    "./chord_rec/qh132egz/checkpoints/mozart-finetune-CKPTTRUTH-epoch=15-val_loss=21.665.ckpt"
+)
 
 # Directories
 TEST_XML_DIR = "data/test_split"  # Contains .xml test files
