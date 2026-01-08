@@ -340,15 +340,27 @@ def main():
         print("  [{}] {}".format(i, task))
 
     banner("Step 5: Load model from checkpoint")
-    # Debug: show first 5 keys
-    print("First 5 checkpoint keys:")
-    for k in list(state_dict.keys())[:5]:
+
+    print("\n=== CHECKPOINT VERIFICATION ===")
+    print("Checkpoint path:        {}".format(ckpt_path))
+    print("WANDB_ARTIFACT:         {}".format(WANDB_ARTIFACT))
+    print("MODEL_TYPE env var:     {}".format(MODEL_TYPE))
+    print("LOCAL_CKPT env var:     {}".format(LOCAL_CKPT if LOCAL_CKPT else "(not set)"))
+
+    # Debug: show first 10 keys to detect model type
+    print("\nFirst 10 checkpoint keys:")
+    for k in list(state_dict.keys())[:10]:
         print("  {}".format(k))
 
     # Determine if this is a finetuned (PostChordPrediction) or base model
     is_finetuned = any(k.startswith("frozen_model.") for k in state_dict.keys())
-    print("Has 'frozen_model.' prefix: {}".format(is_finetuned))
-    print("MODEL_TYPE env var: {}".format(MODEL_TYPE))
+    has_module_prefix = any(k.startswith("module.") for k in state_dict.keys())
+
+    print("\nModel type detection:")
+    print("  Has 'frozen_model.' prefix: {}".format(is_finetuned))
+    print("  Has 'module.' prefix:       {}".format(has_module_prefix))
+    print("  Detected model type:        {}".format("PostChordPrediction (finetuned)" if is_finetuned else "ChordPrediction (base)"))
+    print("="*35 + "\n")
 
     if is_finetuned or MODEL_TYPE == "post":
         print("Detected finetuned model (PostChordPrediction)")
@@ -422,13 +434,31 @@ def main():
 
             # One-time sanity check
             if not first_batch_checked:
-                print("\n=== SANITY CHECK ===")
+                print("\n" + "="*70)
+                print("SANITY CHECK - First Batch")
+                print("="*70)
                 print("Prediction keys:", sorted(preds.keys()))
                 print("TASK_ORDER:     ", TASK_ORDER)
                 print("Labels shape:   ", labels.shape)
-                print("Match:", set(preds.keys()) == set(TASK_ORDER[:len(preds.keys())]))
+                print("\nTask order alignment check:")
+                for i, task in enumerate(TASK_ORDER):
+                    in_preds = task in preds
+                    pred_shape = preds[task].shape if in_preds else "N/A"
+                    label_unique = labels[:, i].unique().tolist() if i < labels.shape[1] else []
+                    print(f"  [{i:2d}] {task:15s} in_preds={in_preds:5s} pred_shape={pred_shape} label_range={label_unique[:5]}...")
+
+                print("\nForward pass check:")
+                print(f"  Model type: {type(model).__name__}")
+                print(f"  use_frozen: {use_frozen}")
+                print(f"  Output type: {type(out)}")
+                print(f"  Preds type: {type(preds)}")
+
+                print("\nLabel column check (first row, first 14 cols):")
+                if labels.shape[0] > 0:
+                    print("  ", labels[0, :14].tolist())
+
                 first_batch_checked = True
-                print("===================\n")
+                print("="*70 + "\n")
 
             # Compute per-task accuracy
             for t_i, tname in enumerate(TASK_ORDER):
@@ -512,6 +542,14 @@ def main():
                 print("Processed {}/{} graphs...".format(idx + 1, len(loader)))
 
     banner("TEST RESULTS")
+
+    print("\n=== EVALUATION SUMMARY ===")
+    print(f"Total batches processed:  {idx + 1}")
+    print(f"RNalt pieces with timing: {int(rnalt_total_time > 0)}")
+    print(f"RNalt onset total:        {rnalt_onset_total}")
+    print(f"Val RomNum total:         {romnum_total}")
+    print("="*30 + "\n")
+
     print("Per-task accuracy:")
     for tname in TASK_ORDER:
         tot = total_by_task[tname]
