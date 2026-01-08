@@ -339,6 +339,32 @@ def main():
     for i, task in enumerate(TASK_ORDER):
         print("  [{}] {}".format(i, task))
 
+    # Print vocabulary mappings for key tasks
+    print("\n=== VOCABULARY MAPPINGS ===")
+    if hasattr(test_dataset, 'tasks'):
+        if 'romanNumeral' in test_dataset.tasks:
+            print("romanNumeral vocab size: {}".format(test_dataset.tasks['romanNumeral']))
+        if 'localkey' in test_dataset.tasks:
+            print("localkey vocab size: {}".format(test_dataset.tasks['localkey']))
+        if 'inversion' in test_dataset.tasks:
+            print("inversion vocab size: {}".format(test_dataset.tasks['inversion']))
+
+    # Try to get actual class lists
+    try:
+        if DATA_VERSION == "v2.0.0":
+            from chordgnn.utils.chord_representations_latest import COMMON_ROMAN_NUMERALS, KEYS
+            print("\nRomanNumeral classes (first 10): {}".format(list(COMMON_ROMAN_NUMERALS[:10])))
+            print("LocalKey classes (first 10): {}".format(list(KEYS[:10])))
+            print("Inversion classes: [0=root, 1=first, 2=second, 3=third]")
+        else:
+            from chordgnn.utils.chord_representations import COMMON_ROMAN_NUMERALS, KEYS
+            print("\nRomanNumeral classes (first 10): {}".format(list(COMMON_ROMAN_NUMERALS[:10])))
+            print("LocalKey classes (first 10): {}".format(list(KEYS[:10])))
+            print("Inversion classes: [0=root, 1=first, 2=second, 3=third]")
+    except Exception as e:
+        print("Could not load class lists: {}".format(e))
+    print("="*35 + "\n")
+
     banner("Step 5: Load model from checkpoint")
 
     print("\n=== CHECKPOINT VERIFICATION ===")
@@ -405,8 +431,29 @@ def main():
     romnum_correct = 0
     romnum_total = 0
 
+    # Per-component error tracking
+    rn_errors = 0  # romanNumeral wrong
+    lk_errors = 0  # localkey wrong
+    inv_errors = 0  # inversion wrong
+    total_comparisons = 0
+
+    # Per-piece CSR tracking
+    piece_csr_list = []
+
     # One-time sanity check
     first_batch_checked = False
+
+    # Load class lists for decoding
+    try:
+        if DATA_VERSION == "v2.0.0":
+            from chordgnn.utils.chord_representations_latest import COMMON_ROMAN_NUMERALS, KEYS
+        else:
+            from chordgnn.utils.chord_representations import COMMON_ROMAN_NUMERALS, KEYS
+        RN_CLASSES = list(COMMON_ROMAN_NUMERALS)
+        LK_CLASSES = list(KEYS)
+    except:
+        RN_CLASSES = None
+        LK_CLASSES = None
 
     with torch.no_grad():
         for idx, batch in enumerate(loader):
@@ -464,6 +511,40 @@ def main():
                 if labels.shape[0] > 0:
                     print("  ", labels[0, :14].tolist())
 
+                # Show sample predictions vs ground truth
+                if all(k in preds for k in ("romanNumeral", "localkey", "inversion")) and RN_CLASSES and LK_CLASSES:
+                    print("\n" + "-"*70)
+                    print("SAMPLE PREDICTIONS VS GROUND TRUTH (First 15 onsets)")
+                    print("-"*70)
+                    print(f"{'Onset':<6} {'Pred RN':<12} {'GT RN':<12} {'Pred LK':<8} {'GT LK':<8} {'Pred Inv':<4} {'GT Inv':<4} {'Match':<6}")
+                    print("-"*70)
+
+                    rn_pred = preds["romanNumeral"].argmax(dim=-1)
+                    lk_pred = preds["localkey"].argmax(dim=-1)
+                    inv_pred = preds["inversion"].argmax(dim=-1)
+
+                    rn_idx = TASK_ORDER.index("romanNumeral")
+                    lk_idx = TASK_ORDER.index("localkey")
+                    inv_idx = TASK_ORDER.index("inversion")
+
+                    rn_gt = align_target_to_pred_length(labels[:, rn_idx].long().to(device), rn_pred.shape[0], onset_idx)
+                    lk_gt = align_target_to_pred_length(labels[:, lk_idx].long().to(device), lk_pred.shape[0], onset_idx)
+                    inv_gt = align_target_to_pred_length(labels[:, inv_idx].long().to(device), inv_pred.shape[0], onset_idx)
+
+                    max_samples = min(15, rn_pred.shape[0])
+                    for i in range(max_samples):
+                        if rn_gt[i] >= 0 and lk_gt[i] >= 0 and inv_gt[i] >= 0:
+                            pred_rn_str = RN_CLASSES[rn_pred[i].item()] if rn_pred[i].item() < len(RN_CLASSES) else f"?{rn_pred[i].item()}"
+                            gt_rn_str = RN_CLASSES[rn_gt[i].item()] if rn_gt[i].item() < len(RN_CLASSES) else f"?{rn_gt[i].item()}"
+                            pred_lk_str = LK_CLASSES[lk_pred[i].item()] if lk_pred[i].item() < len(LK_CLASSES) else f"?{lk_pred[i].item()}"
+                            gt_lk_str = LK_CLASSES[lk_gt[i].item()] if lk_gt[i].item() < len(LK_CLASSES) else f"?{lk_gt[i].item()}"
+                            pred_inv = inv_pred[i].item()
+                            gt_inv = inv_gt[i].item()
+
+                            match = "✓" if (rn_pred[i] == rn_gt[i] and lk_pred[i] == lk_gt[i] and inv_pred[i] == inv_gt[i]) else "✗"
+                            print(f"{i:<6} {pred_rn_str:<12} {gt_rn_str:<12} {pred_lk_str:<8} {gt_lk_str:<8} {pred_inv:<4} {gt_inv:<4} {match:<6}")
+                    print("-"*70)
+
                 first_batch_checked = True
                 print("="*70 + "\n")
 
@@ -516,9 +597,26 @@ def main():
                         rnalt_correct_time += piece_correct_time
                         rnalt_total_time += piece_total_time
 
+                        # Track per-piece CSR
+                        if piece_total_time > 0:
+                            piece_csr = 100.0 * piece_correct_time / piece_total_time
+                            piece_csr_list.append((name[0] if isinstance(name, (list, tuple)) else str(name), piece_csr))
+
                 # Also track onset-level for comparison
                 rnalt_onset_correct += int((rnalt_onset_acc * mask.float()).sum().item())
                 rnalt_onset_total += int(mask.sum().item())
+
+                # Track per-component errors
+                mask_cpu = mask.cpu()
+                rn_wrong = ((rn_pred != rn_t) & mask_cpu).sum().item()
+                lk_wrong = ((lk_pred != lk_t) & mask_cpu).sum().item()
+                inv_wrong = ((inv_pred != inv_t) & mask_cpu).sum().item()
+                valid_count = mask_cpu.sum().item()
+
+                rn_errors += rn_wrong
+                lk_errors += lk_wrong
+                inv_errors += inv_wrong
+                total_comparisons += valid_count
 
             # Compute Val RomNum (degree1+degree2+quality+root+inversion+localkey)
             if all(k in preds for k in ("degree1", "degree2", "quality", "root", "inversion", "localkey")) and \
@@ -586,6 +684,28 @@ def main():
         print("Val RomNum (degree1+degree2+quality+root+inversion+localkey): {:.2f}% ({}/{})".format(romnum_acc, romnum_correct, romnum_total))
     else:
         print("Val RomNum: n/a (not all required tasks available)")
+
+    # Per-component error breakdown
+    if total_comparisons > 0:
+        print("\n=== PER-COMPONENT ERROR BREAKDOWN ===")
+        print("(Which component is wrong most often?)")
+        print("  RomanNumeral errors: {:6d} ({:5.2f}%)".format(rn_errors, 100.0 * rn_errors / total_comparisons))
+        print("  LocalKey errors:     {:6d} ({:5.2f}%)".format(lk_errors, 100.0 * lk_errors / total_comparisons))
+        print("  Inversion errors:    {:6d} ({:5.2f}%)".format(inv_errors, 100.0 * inv_errors / total_comparisons))
+        print("  Total comparisons:   {:6d}".format(total_comparisons))
+        print("  Note: These overlap (one onset can have multiple errors)")
+
+    # Per-piece CSR breakdown
+    if piece_csr_list:
+        print("\n=== PER-PIECE CSR BREAKDOWN ===")
+        print("(Top 10 worst and best pieces)")
+        sorted_pieces = sorted(piece_csr_list, key=lambda x: x[1])
+        print("\nWorst 10 pieces:")
+        for piece_name, csr in sorted_pieces[:10]:
+            print("  {:30s} {:6.2f}%".format(piece_name, csr))
+        print("\nBest 10 pieces:")
+        for piece_name, csr in sorted_pieces[-10:]:
+            print("  {:30s} {:6.2f}%".format(piece_name, csr))
 
     # Sanity check: warn if any tasks have suspiciously low totals
     print("\nSanity check - label totals per task:")
