@@ -48,7 +48,11 @@ try:
     # Import vocabulary from latest version as well
     from chordgnn.utils.chord_representations_latest import (
         COMMON_ROMAN_NUMERALS as RN_LATEST,
-        KEYS as KEYS_LATEST
+        KEYS as KEYS_LATEST,
+        SPELLINGS as SPELLINGS_LATEST
+    )
+    from chordgnn.utils.chord_representations import (
+        SPELLINGS as SPELLINGS_V1
     )
 
     # Use v1 for both since resolveRomanNumeralCosine only exists there
@@ -709,9 +713,11 @@ def main():
                 if DATA_VERSION == "v2.0.0":
                     RN_CLS = RN_LATEST
                     KEY_CLS = KEYS_LATEST
+                    SPELLING_CLS = SPELLINGS_LATEST
                 else:
                     RN_CLS = RN_V1
                     KEY_CLS = KEYS_V1
+                    SPELLING_CLS = SPELLINGS_V1
 
                 # Use v1 cosine function for both (it's the only one that exists)
                 resolve_fn = resolveRomanNumeralCosine
@@ -724,11 +730,12 @@ def main():
                         continue
 
                     try:
-                        # Decode predictions
-                        b = KEY_CLS[bass_pred[i].item()] if bass_pred[i] < len(KEY_CLS) else "C"
-                        t = KEY_CLS[tenor_pred[i].item()] if tenor_pred[i] < len(KEY_CLS) else "C"
-                        a = KEY_CLS[alto_pred[i].item()] if alto_pred[i] < len(KEY_CLS) else "C"
-                        s = KEY_CLS[soprano_pred[i].item()] if soprano_pred[i] < len(KEY_CLS) else "C"
+                        # Decode predictions - use SPELLING_CLS for voices (note names like "C", "E-", "F#")
+                        b = SPELLING_CLS[bass_pred[i].item()] if bass_pred[i] < len(SPELLING_CLS) else "C"
+                        t = SPELLING_CLS[tenor_pred[i].item()] if tenor_pred[i] < len(SPELLING_CLS) else "C"
+                        a = SPELLING_CLS[alto_pred[i].item()] if alto_pred[i] < len(SPELLING_CLS) else "C"
+                        s = SPELLING_CLS[soprano_pred[i].item()] if soprano_pred[i] < len(SPELLING_CLS) else "C"
+                        # Use KEY_CLS for keys (like "F", "C", "g", "b-")
                         key = KEY_CLS[localkey_pred[i].item()] if localkey_pred[i] < len(KEY_CLS) else "C"
                         tonkey = KEY_CLS[tonkey_pred[i].item()] if tonkey_pred[i] < len(KEY_CLS) else "C"
 
