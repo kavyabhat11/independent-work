@@ -745,6 +745,8 @@ def main():
                 if idx == 0:
                     print("\n" + "="*70)
                     print("DEBUG: First piece cosine resolution comparisons")
+                    piece_name = name[0] if isinstance(name, (list, tuple)) else str(name)
+                    print(f"Piece: {piece_name}")
                     print("="*70)
 
                 for i in range(bass_pred.shape[0]):
