@@ -30,6 +30,7 @@ from torch.utils.data import DataLoader
 # Import cosine similarity resolution functions
 COSINE_AVAILABLE = False
 resolveRomanNumeralCosine = None
+getTonicizationScaleDegree = None
 RN_LATEST = None
 KEYS_LATEST = None
 resolveRomanNumeralCosine_v1 = None
@@ -41,6 +42,7 @@ try:
     # This is what analyse_score.py uses
     from chordgnn.utils.chord_representations import (
         resolveRomanNumeralCosine,
+        getTonicizationScaleDegree,
         COMMON_ROMAN_NUMERALS as RN_V1,
         KEYS as KEYS_V1
     )
@@ -782,9 +784,12 @@ def main():
 
                         # Add tonicization if different key
                         if gt_tonkey != gt_lk:
-                            # TODO: compute scale degree for tonicization
-                            # For now, just note that it's tonicized
-                            pass
+                            try:
+                                denominator = getTonicizationScaleDegree(gt_lk, gt_tonkey)
+                                gt_full_figure = f"{gt_full_figure}/{denominator}"
+                            except Exception:
+                                # If tonicization fails, skip it
+                                pass
 
                         # Compare full figures
                         match = resolved_rn == gt_full_figure
