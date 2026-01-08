@@ -37,18 +37,23 @@ RN_V1 = None
 KEYS_V1 = None
 
 try:
-    # Import directly from the already-loaded chordgnn package
-    # Since 'import chordgnn as st' works above, these should work too
-    from chordgnn.utils.chord_representations_latest import (
-        resolveRomanNumeralCosine,
-        COMMON_ROMAN_NUMERALS as RN_LATEST,
-        KEYS as KEYS_LATEST
-    )
+    # Import cosine resolution function (only exists in v1 chord_representations.py)
+    # This is what analyse_score.py uses
     from chordgnn.utils.chord_representations import (
-        resolveRomanNumeralCosine as resolveRomanNumeralCosine_v1,
+        resolveRomanNumeralCosine,
         COMMON_ROMAN_NUMERALS as RN_V1,
         KEYS as KEYS_V1
     )
+
+    # Import vocabulary from latest version as well
+    from chordgnn.utils.chord_representations_latest import (
+        COMMON_ROMAN_NUMERALS as RN_LATEST,
+        KEYS as KEYS_LATEST
+    )
+
+    # Use v1 for both since resolveRomanNumeralCosine only exists there
+    resolveRomanNumeralCosine_v1 = resolveRomanNumeralCosine
+
     COSINE_AVAILABLE = True
     print("✓ Cosine resolution functions loaded successfully")
 except ImportError as e:
@@ -699,14 +704,16 @@ def main():
                 lk_gt = align_target_to_pred_length(labels[:, lk_idx].long().to(device), bass_pred.shape[0], onset_idx).cpu()
 
                 # Select appropriate class lists based on data version
+                # Note: resolveRomanNumeralCosine only exists in v1, so we use it for both
                 if DATA_VERSION == "v2.0.0":
                     RN_CLS = RN_LATEST
                     KEY_CLS = KEYS_LATEST
-                    resolve_fn = resolveRomanNumeralCosine
                 else:
                     RN_CLS = RN_V1
                     KEY_CLS = KEYS_V1
-                    resolve_fn = resolveRomanNumeralCosine_v1
+
+                # Use v1 cosine function for both (it's the only one that exists)
+                resolve_fn = resolveRomanNumeralCosine
 
                 mask_cosine = rn_gt >= 0
                 correct_cosine = torch.zeros(bass_pred.shape[0], dtype=torch.bool)
