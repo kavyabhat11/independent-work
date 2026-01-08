@@ -687,6 +687,7 @@ def main():
                     romnum_total += tot
 
             # Compute cosine similarity-based Roman numeral resolution (like analyse_score.py)
+            # This replicates what analyse_score.py does to generate RomanText files
             if COSINE_AVAILABLE and all(k in preds for k in ("bass", "tenor", "alto", "soprano", "pcset", "localkey", "tonkey", "romanNumeral")):
                 # Get predictions
                 bass_pred = preds["bass"].argmax(dim=-1).cpu()
@@ -740,15 +741,34 @@ def main():
                         rn_argmax_idx = preds["romanNumeral"].argmax(dim=-1)[i].item()
                         numerator = RN_CLS[rn_argmax_idx] if rn_argmax_idx < len(RN_CLS) else "I"
 
-                        # Resolve using cosine similarity
+                        # Resolve using cosine similarity - returns full figure like "I6", "V7/ii"
                         resolved = resolve_fn(b, t, a, s, pcs, key, numerator, tonkey)
-                        resolved_rn = resolved[0]  # Returns (figure, inversion, ...)
+                        resolved_rn = resolved[0]  # Returns (figure, chordLabel)
 
-                        # Get ground truth RN
-                        gt_rn = RN_CLS[rn_gt[i].item()] if rn_gt[i] < len(RN_CLS) else "I"
+                        # Construct ground truth full figure from labels
+                        gt_rn_base = RN_CLS[rn_gt[i].item()] if rn_gt[i] < len(RN_CLS) else "I"
+                        gt_inv_idx = align_target_to_pred_length(labels[:, TASK_ORDER.index("inversion")].long().to(device), bass_pred.shape[0], onset_idx).cpu()[i].item()
+                        gt_tonkey_idx = align_target_to_pred_length(labels[:, TASK_ORDER.index("tonkey")].long().to(device), bass_pred.shape[0], onset_idx).cpu()[i].item()
+                        gt_lk = KEY_CLS[lk_gt[i].item()] if lk_gt[i] < len(KEY_CLS) else "C"
+                        gt_tonkey = KEY_CLS[gt_tonkey_idx] if gt_tonkey_idx >= 0 and gt_tonkey_idx < len(KEY_CLS) else gt_lk
 
-                        # Compare
-                        if resolved_rn == gt_rn:
+                        # Construct full figure: romanNumeral + inversion suffix
+                        gt_full_figure = gt_rn_base
+                        if gt_inv_idx == 1:  # First inversion
+                            gt_full_figure += "6"
+                        elif gt_inv_idx == 2:  # Second inversion
+                            gt_full_figure += "64" if "7" not in gt_rn_base else "43"
+                        elif gt_inv_idx == 3:  # Third inversion (seventh chords only)
+                            gt_full_figure = gt_rn_base.replace("7", "2")
+
+                        # Add tonicization if different key
+                        if gt_tonkey != gt_lk:
+                            # TODO: compute scale degree for tonicization
+                            # For now, just note that it's tonicized
+                            pass
+
+                        # Compare full figures
+                        if resolved_rn == gt_full_figure:
                             correct_cosine[i] = True
                     except Exception as e:
                         # If resolution fails, mark as incorrect
@@ -821,8 +841,10 @@ def main():
         print("\n" + "="*70)
         print("COSINE SIMILARITY-BASED RN RESOLUTION (like analyse_score.py)")
         print("="*70)
-        print("This resolves Roman numerals from voices+pcset+key using cosine similarity")
-        print("instead of directly using the romanNumeral task output.")
+        print("This replicates what analyse_score.py does:")
+        print("  1. Decode voice predictions (bass/tenor/alto/soprano) to pitch names")
+        print("  2. Call resolveRomanNumeralCosine to construct full figures (e.g., 'I6', 'V7/ii')")
+        print("  3. Compare to ground truth figures constructed from TSV labels")
         print()
         cosine_csr = 100.0 * cosine_rn_correct_time / cosine_rn_total_time
         print("Cosine RN accuracy (duration-weighted): {:.2f}%".format(cosine_csr))
@@ -833,6 +855,8 @@ def main():
         print("  Direct RNalt CSR (RN+LK+INV):         {:.2f}%".format(csr if rnalt_total_time > 0 else 0.0))
         print("  Cosine-resolved RN accuracy:          {:.2f}%".format(cosine_csr))
         print("  Δ (Cosine - Direct):                  {:+.2f}%".format(cosine_csr - (csr if rnalt_total_time > 0 else 0.0)))
+        print()
+        print("NOTE: This should approximate Dmitri's ~48% comparison results.")
     elif COSINE_AVAILABLE:
         print("\nCosine RN resolution: n/a (required tasks not available)")
     else:
