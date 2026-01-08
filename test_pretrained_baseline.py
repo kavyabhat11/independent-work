@@ -607,11 +607,10 @@ def main():
                 rnalt_onset_total += int(mask.sum().item())
 
                 # Track per-component errors
-                mask_cpu = mask.cpu()
-                rn_wrong = ((rn_pred != rn_t) & mask_cpu).sum().item()
-                lk_wrong = ((lk_pred != lk_t) & mask_cpu).sum().item()
-                inv_wrong = ((inv_pred != inv_t) & mask_cpu).sum().item()
-                valid_count = mask_cpu.sum().item()
+                rn_wrong = ((rn_pred != rn_t) & mask).sum().item()
+                lk_wrong = ((lk_pred != lk_t) & mask).sum().item()
+                inv_wrong = ((inv_pred != inv_t) & mask).sum().item()
+                valid_count = mask.sum().item()
 
                 rn_errors += rn_wrong
                 lk_errors += lk_wrong
