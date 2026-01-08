@@ -725,6 +725,15 @@ def main():
                 mask_cosine = rn_gt >= 0
                 correct_cosine = torch.zeros(bass_pred.shape[0], dtype=torch.bool)
 
+                # Debug: track first few comparisons
+                debug_count = 0
+                debug_limit = 10
+
+                if idx == 0:
+                    print("\n" + "="*70)
+                    print("DEBUG: First piece cosine resolution comparisons")
+                    print("="*70)
+
                 for i in range(bass_pred.shape[0]):
                     if not mask_cosine[i]:
                         continue
@@ -775,10 +784,20 @@ def main():
                             pass
 
                         # Compare full figures
-                        if resolved_rn == gt_full_figure:
+                        match = resolved_rn == gt_full_figure
+                        if match:
                             correct_cosine[i] = True
+
+                        # Debug: print first few comparisons
+                        if debug_count < debug_limit and idx == 0:
+                            print(f"  [{i:3d}] Pred: {resolved_rn:12s} | GT: {gt_full_figure:12s} | Match: {match}")
+                            debug_count += 1
+
                     except Exception as e:
                         # If resolution fails, mark as incorrect
+                        if debug_count < debug_limit and idx == 0:
+                            print(f"  [{i:3d}] ERROR: {str(e)[:50]}")
+                            debug_count += 1
                         pass
 
                 # Track onset-level accuracy
