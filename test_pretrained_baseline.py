@@ -51,14 +51,13 @@ try:
     from chordgnn.utils.chord_representations_latest import (
         COMMON_ROMAN_NUMERALS as RN_LATEST,
         KEYS as KEYS_LATEST,
-        SPELLINGS as SPELLINGS_LATEST
+        SPELLINGS as SPELLINGS_LATEST,
+        PCSETS as PCSETS_LATEST
     )
     from chordgnn.utils.chord_representations import (
         SPELLINGS as SPELLINGS_V1
     )
-
-    # Import PCSETS from globals
-    from chordgnn.utils.globals import PCSETS
+    from chordgnn.utils.globals import PCSETS as PCSETS_V1
 
     # Use v1 for both since resolveRomanNumeralCosine only exists there
     resolveRomanNumeralCosine_v1 = resolveRomanNumeralCosine
@@ -720,10 +719,12 @@ def main():
                     RN_CLS = RN_LATEST
                     KEY_CLS = KEYS_LATEST
                     SPELLING_CLS = SPELLINGS_LATEST
+                    PCSETS_CLS = PCSETS_LATEST  # 121 elements - matches analyse_score.py
                 else:
                     RN_CLS = RN_V1
                     KEY_CLS = KEYS_V1
                     SPELLING_CLS = SPELLINGS_V1
+                    PCSETS_CLS = PCSETS_V1  # 94 elements
 
                 # Use v1 cosine function for both (it's the only one that exists)
                 resolve_fn = resolveRomanNumeralCosine
@@ -754,9 +755,9 @@ def main():
                         key = KEY_CLS[localkey_pred[i].item()] if localkey_pred[i] < len(KEY_CLS) else "C"
                         tonkey = KEY_CLS[tonkey_pred[i].item()] if tonkey_pred[i] < len(KEY_CLS) else "C"
 
-                        # Decode pcset from predictions
+                        # Decode pcset from predictions (use correct vocabulary for data version)
                         pcset_idx = preds["pcset"].argmax(dim=-1)[i].item()
-                        pcs = PCSETS[pcset_idx] if pcset_idx < len(PCSETS) else []
+                        pcs = PCSETS_CLS[pcset_idx] if pcset_idx < len(PCSETS_CLS) else []
 
                         # Get predicted RN using argmax for the numerator parameter
                         rn_argmax_idx = preds["romanNumeral"].argmax(dim=-1)[i].item()
