@@ -12,12 +12,17 @@ It also:
 - Forces n_hidden=256 if ckpt heads imply 256 (yours do)
 - Splits train/val/test by matching graph.name to MOZART_ROOT split filenames
 - Freezes frozen_model encoder entirely, only trains task-specific heads
-  (set UNFREEZE_LAST_N_GCN_LAYERS>0 or UNFREEZE_GRU=True to unfreeze encoder layers)
+  (set UNFREEZE_LAST_N_GCN_LAYERS>0, UNFREEZE_SPECIFIC_LAYER, or UNFREEZE_GRU=True to unfreeze encoder layers)
+- Supports discriminative learning rates: tiny LR for unfrozen encoder layers, higher LR for post-processing
 
 Run:
   export MOZART_ROOT=/path/to/mozart_dataset   # contains training/validation/test/*.tsv
+  export UNFREEZE_SPECIFIC_LAYER=1             # unfreeze GCN layer 1
+  export USE_DISCRIMINATIVE_LR=True            # enable discriminative LRs
+  export LR_ENCODER=1e-5                       # tiny LR for unfrozen encoder (default: 1e-5)
+  export LR_POSTPROCESSING=5e-4                # higher LR for post-processing (default: 5e-4)
   wandb login                                  # if needed
-  python finetune_mozart_ckpttruth.py
+  python finetune_from_checkpoint_FIXED.py
 """
 
 import os
@@ -45,6 +50,11 @@ MOZART_ROOT = os.environ.get("MOZART_ROOT", "./mozart_dataset")
 CACHE_ROOT = os.environ.get("CACHE_ROOT", "/scratch/network/kb9520/chordgnn_data")
 
 LR = float(os.environ.get("LR", "5e-5"))
+# Discriminative learning rates
+LR_ENCODER = float(os.environ.get("LR_ENCODER", "1e-5"))  # tiny LR for unfrozen encoder layers
+LR_POSTPROCESSING = float(os.environ.get("LR_POSTPROCESSING", "5e-4"))  # higher LR for post-processing
+USE_DISCRIMINATIVE_LR = os.environ.get("USE_DISCRIMINATIVE_LR", "False").lower() == "true"
+
 WEIGHT_DECAY = float(os.environ.get("WEIGHT_DECAY", "1e-4"))
 MAX_EPOCHS = int(os.environ.get("MAX_EPOCHS", "20"))
 NUM_WORKERS = int(os.environ.get("NUM_WORKERS", "8"))
@@ -63,6 +73,10 @@ TASK_ORDER = [
 
 # How many GCN layers to unfreeze from the end (0 = fully frozen encoder, only train heads)
 UNFREEZE_LAST_N_GCN_LAYERS = int(os.environ.get("UNFREEZE_LAST_N_GCN_LAYERS", "0"))
+# Unfreeze a specific GCN layer by index (e.g., "1" for layers.1)
+UNFREEZE_SPECIFIC_LAYER = os.environ.get("UNFREEZE_SPECIFIC_LAYER", None)
+if UNFREEZE_SPECIFIC_LAYER is not None:
+    UNFREEZE_SPECIFIC_LAYER = int(UNFREEZE_SPECIFIC_LAYER)
 # Also unfreeze GRU and final projection layers
 UNFREEZE_GRU = os.environ.get("UNFREEZE_GRU", "False").lower() == "true"
 
@@ -534,8 +548,26 @@ def main():
 
     unfrozen_parts = []
 
+    # Unfreeze a specific GCN layer by index if requested
+    if UNFREEZE_SPECIFIC_LAYER is not None:
+        if hasattr(model.frozen_model, 'encoder') and hasattr(model.frozen_model.encoder, 'encoder'):
+            gcn = model.frozen_model.encoder.encoder  # HGCN instance
+            if hasattr(gcn, 'layers'):
+                n_total_layers = len(gcn.layers)
+                if 0 <= UNFREEZE_SPECIFIC_LAYER < n_total_layers:
+                    for p in gcn.layers[UNFREEZE_SPECIFIC_LAYER].parameters():
+                        p.requires_grad = True
+                    unfrozen_parts.append(f"GCN layer {UNFREEZE_SPECIFIC_LAYER}")
+                    print(f"✓ Unfroze GCN layer {UNFREEZE_SPECIFIC_LAYER} (out of {n_total_layers} total)")
+                else:
+                    print(f"⚠ Layer index {UNFREEZE_SPECIFIC_LAYER} out of range (have {n_total_layers} layers)")
+            else:
+                print("⚠ Could not find GCN layers to unfreeze")
+        else:
+            print("⚠ Could not find encoder to unfreeze GCN layers")
+
     # Unfreeze last N GCN layers if requested
-    if UNFREEZE_LAST_N_GCN_LAYERS > 0:
+    elif UNFREEZE_LAST_N_GCN_LAYERS > 0:
         # ChordEncoder has: encoder (HGCN with self.layers ModuleList)
         if hasattr(model.frozen_model, 'encoder') and hasattr(model.frozen_model.encoder, 'encoder'):
             gcn = model.frozen_model.encoder.encoder  # HGCN instance
@@ -575,6 +607,57 @@ def main():
     total_params = sum(p.numel() for p in model.parameters())
     print(f"✓ Trainable params: {trainable_params:,} / {total_params:,} ({100*trainable_params/total_params:.1f}%)")
 
+    # ---- Configure discriminative learning rates if enabled
+    if USE_DISCRIMINATIVE_LR and unfrozen_parts:
+        banner("STEP 8.5: Configure discriminative learning rates")
+
+        # Separate parameters into encoder and post-processing groups
+        encoder_params = []
+        postprocessing_params = []
+
+        for name, param in model.named_parameters():
+            if not param.requires_grad:
+                continue
+
+            # Parameters in frozen_model that are trainable belong to encoder group
+            if name.startswith("frozen_model."):
+                encoder_params.append(param)
+            else:
+                # All other trainable params (module.*, etc.) are post-processing
+                postprocessing_params.append(param)
+
+        encoder_param_count = sum(p.numel() for p in encoder_params)
+        postproc_param_count = sum(p.numel() for p in postprocessing_params)
+
+        print(f"✓ Encoder params: {encoder_param_count:,} (LR={LR_ENCODER:.2e})")
+        print(f"✓ Post-processing params: {postproc_param_count:,} (LR={LR_POSTPROCESSING:.2e})")
+
+        # Override the configure_optimizers method
+        def configure_optimizers_discriminative(self):
+            param_groups = []
+            if encoder_params:
+                param_groups.append({
+                    'params': encoder_params,
+                    'lr': LR_ENCODER,
+                    'weight_decay': WEIGHT_DECAY
+                })
+            if postprocessing_params:
+                param_groups.append({
+                    'params': postprocessing_params,
+                    'lr': LR_POSTPROCESSING,
+                    'weight_decay': WEIGHT_DECAY
+                })
+
+            optimizer = torch.optim.Adam(param_groups)
+            return optimizer
+
+        # Monkey-patch the model's configure_optimizers method
+        import types
+        model.configure_optimizers = types.MethodType(configure_optimizers_discriminative, model)
+        print("✓ Configured discriminative LRs: encoder={:.2e}, post-processing={:.2e}".format(LR_ENCODER, LR_POSTPROCESSING))
+    elif USE_DISCRIMINATIVE_LR and not unfrozen_parts:
+        print("⚠ USE_DISCRIMINATIVE_LR=True but no encoder layers unfrozen; using default LR")
+
     # ---- Step 10: callbacks + trainer
     banner("STEP 9: Train")
     ckpt_cb = ModelCheckpoint(
@@ -607,10 +690,14 @@ def main():
         "task_dims": task_dims,
         "task_order": TASK_ORDER,
         "lr": LR,
+        "lr_encoder": LR_ENCODER,
+        "lr_postprocessing": LR_POSTPROCESSING,
+        "use_discriminative_lr": USE_DISCRIMINATIVE_LR,
         "weight_decay": WEIGHT_DECAY,
         "max_epochs": MAX_EPOCHS,
         "num_workers": NUM_WORKERS,
         "unfreeze_last_n_gcn_layers": UNFREEZE_LAST_N_GCN_LAYERS,
+        "unfreeze_specific_layer": UNFREEZE_SPECIFIC_LAYER,
         "unfreeze_gru": UNFREEZE_GRU,
     })
     trainer.fit(model, datamodule)
