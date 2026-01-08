@@ -450,9 +450,9 @@ def main():
                 print("\nTask order alignment check:")
                 for i, task in enumerate(TASK_ORDER):
                     in_preds = task in preds
-                    pred_shape = preds[task].shape if in_preds else "N/A"
+                    pred_shape = str(preds[task].shape) if in_preds else "N/A"
                     label_unique = labels[:, i].unique().tolist() if i < labels.shape[1] else []
-                    print(f"  [{i:2d}] {task:15s} in_preds={in_preds:5s} pred_shape={pred_shape} label_range={label_unique[:5]}...")
+                    print(f"  [{i:2d}] {task:15s} in_preds={str(in_preds):5s} pred_shape={pred_shape:20s} label_range={str(label_unique[:5]):20s}")
 
                 print("\nForward pass check:")
                 print(f"  Model type: {type(model).__name__}")
