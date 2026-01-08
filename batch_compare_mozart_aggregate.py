@@ -30,7 +30,7 @@ compare.analyzed_file2 = None
 # PATHS
 # ===============================================================
 GT_DIR = "data/mozart_test"          # ground truth .txt files
-PRED_DIR = "txt_analysis/mozart"   # predictions
+PRED_DIR = "txt_analysis/pretrained"   # predictions (CHANGE THIS: mozart/pretrained/finetuned)
 
 # results
 aggregate_pcts = []

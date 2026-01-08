@@ -27,6 +27,15 @@ import chordgnn as st
 from pytorch_lightning import Trainer
 from torch.utils.data import DataLoader
 
+# Import cosine similarity resolution functions
+try:
+    from chordgnn.utils.chord_representations_latest import resolveRomanNumeralCosine, COMMON_ROMAN_NUMERALS as RN_LATEST, KEYS as KEYS_LATEST
+    from chordgnn.utils.chord_representations import resolveRomanNumeralCosine as resolveRomanNumeralCosine_v1, COMMON_ROMAN_NUMERALS as RN_V1, KEYS as KEYS_V1
+    COSINE_AVAILABLE = True
+except ImportError:
+    COSINE_AVAILABLE = False
+    print("Warning: Could not import cosine similarity functions")
+
 # ----------------------------
 # CONFIG
 # ----------------------------
@@ -440,6 +449,12 @@ def main():
     # Per-piece CSR tracking
     piece_csr_list = []
 
+    # Cosine similarity-based RN resolution (like analyse_score.py)
+    cosine_rn_correct = 0
+    cosine_rn_total = 0
+    cosine_rn_correct_time = 0.0
+    cosine_rn_total_time = 0.0
+
     # One-time sanity check
     first_batch_checked = False
 
@@ -642,6 +657,92 @@ def main():
                     romnum_correct += corr
                     romnum_total += tot
 
+            # Compute cosine similarity-based Roman numeral resolution (like analyse_score.py)
+            if COSINE_AVAILABLE and all(k in preds for k in ("bass", "tenor", "alto", "soprano", "pcset", "localkey", "tonkey", "romanNumeral")):
+                # Get predictions
+                bass_pred = preds["bass"].argmax(dim=-1).cpu()
+                tenor_pred = preds["tenor"].argmax(dim=-1).cpu()
+                alto_pred = preds["alto"].argmax(dim=-1).cpu()
+                soprano_pred = preds["soprano"].argmax(dim=-1).cpu()
+                pcset_pred = preds["pcset"].argmax(dim=-1).cpu()
+                localkey_pred = preds["localkey"].argmax(dim=-1).cpu()
+                tonkey_pred = preds["tonkey"].argmax(dim=-1).cpu()
+
+                # Get ground truth
+                rn_idx = TASK_ORDER.index("romanNumeral")
+                lk_idx = TASK_ORDER.index("localkey")
+                rn_gt = align_target_to_pred_length(labels[:, rn_idx].long().to(device), bass_pred.shape[0], onset_idx).cpu()
+                lk_gt = align_target_to_pred_length(labels[:, lk_idx].long().to(device), bass_pred.shape[0], onset_idx).cpu()
+
+                # Select appropriate class lists based on data version
+                if DATA_VERSION == "v2.0.0":
+                    RN_CLS = RN_LATEST
+                    KEY_CLS = KEYS_LATEST
+                    resolve_fn = resolveRomanNumeralCosine
+                else:
+                    RN_CLS = RN_V1
+                    KEY_CLS = KEYS_V1
+                    resolve_fn = resolveRomanNumeralCosine_v1
+
+                mask_cosine = rn_gt >= 0
+                correct_cosine = torch.zeros(bass_pred.shape[0], dtype=torch.bool)
+
+                for i in range(bass_pred.shape[0]):
+                    if not mask_cosine[i]:
+                        continue
+
+                    try:
+                        # Decode predictions
+                        b = KEY_CLS[bass_pred[i].item()] if bass_pred[i] < len(KEY_CLS) else "C"
+                        t = KEY_CLS[tenor_pred[i].item()] if tenor_pred[i] < len(KEY_CLS) else "C"
+                        a = KEY_CLS[alto_pred[i].item()] if alto_pred[i] < len(KEY_CLS) else "C"
+                        s = KEY_CLS[soprano_pred[i].item()] if soprano_pred[i] < len(KEY_CLS) else "C"
+                        key = KEY_CLS[localkey_pred[i].item()] if localkey_pred[i] < len(KEY_CLS) else "C"
+                        tonkey = KEY_CLS[tonkey_pred[i].item()] if tonkey_pred[i] < len(KEY_CLS) else "C"
+
+                        # For pcset, we need the actual pitch class set, not just the index
+                        # This is a simplification - in analyse_score.py they use actual pitch data
+                        # Here we'll just use an empty pcset since we don't have the actual notes
+                        pcs = []
+
+                        # Get predicted RN using argmax for the numerator parameter
+                        rn_argmax_idx = preds["romanNumeral"].argmax(dim=-1)[i].item()
+                        numerator = RN_CLS[rn_argmax_idx] if rn_argmax_idx < len(RN_CLS) else "I"
+
+                        # Resolve using cosine similarity
+                        resolved = resolve_fn(b, t, a, s, pcs, key, numerator, tonkey)
+                        resolved_rn = resolved[0]  # Returns (figure, inversion, ...)
+
+                        # Get ground truth RN
+                        gt_rn = RN_CLS[rn_gt[i].item()] if rn_gt[i] < len(RN_CLS) else "I"
+
+                        # Compare
+                        if resolved_rn == gt_rn:
+                            correct_cosine[i] = True
+                    except Exception as e:
+                        # If resolution fails, mark as incorrect
+                        pass
+
+                # Track onset-level accuracy
+                cosine_rn_correct += correct_cosine[mask_cosine].sum().item()
+                cosine_rn_total += mask_cosine.sum().item()
+
+                # Track duration-weighted accuracy
+                if onset_idx is not None and len(onset_idx) > 0:
+                    onset_idx_flat = onset_idx.view(-1).long()
+                    times = onset_div[onset_idx_flat].float().cpu()
+
+                    if times.numel() >= 2:
+                        dur = torch.diff(times)
+                        acc_cosine = correct_cosine[:dur.numel()].float()
+                        mask2_cosine = mask_cosine[:dur.numel()]
+
+                        dur_valid = dur[mask2_cosine]
+                        acc_valid = acc_cosine[mask2_cosine]
+
+                        cosine_rn_correct_time += (acc_valid * dur_valid).sum().item()
+                        cosine_rn_total_time += dur_valid.sum().item()
+
             if (idx + 1) % 100 == 0:
                 print("Processed {}/{} graphs...".format(idx + 1, len(loader)))
 
@@ -683,6 +784,28 @@ def main():
         print("Val RomNum (degree1+degree2+quality+root+inversion+localkey): {:.2f}% ({}/{})".format(romnum_acc, romnum_correct, romnum_total))
     else:
         print("Val RomNum: n/a (not all required tasks available)")
+
+    # Report cosine similarity-based RN resolution
+    if cosine_rn_total_time > 0:
+        print("\n" + "="*70)
+        print("COSINE SIMILARITY-BASED RN RESOLUTION (like analyse_score.py)")
+        print("="*70)
+        print("This resolves Roman numerals from voices+pcset+key using cosine similarity")
+        print("instead of directly using the romanNumeral task output.")
+        print()
+        cosine_csr = 100.0 * cosine_rn_correct_time / cosine_rn_total_time
+        print("Cosine RN accuracy (duration-weighted): {:.2f}%".format(cosine_csr))
+        if cosine_rn_total > 0:
+            cosine_onset = 100.0 * cosine_rn_correct / cosine_rn_total
+            print("Cosine RN accuracy (onset-level):      {:.2f}%".format(cosine_onset))
+        print("\nComparison:")
+        print("  Direct RNalt CSR (RN+LK+INV):         {:.2f}%".format(csr if rnalt_total_time > 0 else 0.0))
+        print("  Cosine-resolved RN accuracy:          {:.2f}%".format(cosine_csr))
+        print("  Δ (Cosine - Direct):                  {:+.2f}%".format(cosine_csr - (csr if rnalt_total_time > 0 else 0.0)))
+    elif COSINE_AVAILABLE:
+        print("\nCosine RN resolution: n/a (required tasks not available)")
+    else:
+        print("\nCosine RN resolution: n/a (cosine functions not imported)")
 
     # Per-component error breakdown
     if total_comparisons > 0:
