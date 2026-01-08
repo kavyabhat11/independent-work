@@ -55,6 +55,9 @@ try:
         SPELLINGS as SPELLINGS_V1
     )
 
+    # Import PCSETS from globals
+    from chordgnn.utils.globals import PCSETS
+
     # Use v1 for both since resolveRomanNumeralCosine only exists there
     resolveRomanNumeralCosine_v1 = resolveRomanNumeralCosine
 
@@ -701,6 +704,7 @@ def main():
                 pcset_pred = preds["pcset"].argmax(dim=-1).cpu()
                 localkey_pred = preds["localkey"].argmax(dim=-1).cpu()
                 tonkey_pred = preds["tonkey"].argmax(dim=-1).cpu()
+                romanNumeral_pred = preds["romanNumeral"].argmax(dim=-1).cpu()
 
                 # Get ground truth
                 rn_idx = TASK_ORDER.index("romanNumeral")
@@ -748,10 +752,9 @@ def main():
                         key = KEY_CLS[localkey_pred[i].item()] if localkey_pred[i] < len(KEY_CLS) else "C"
                         tonkey = KEY_CLS[tonkey_pred[i].item()] if tonkey_pred[i] < len(KEY_CLS) else "C"
 
-                        # For pcset, we need the actual pitch class set, not just the index
-                        # This is a simplification - in analyse_score.py they use actual pitch data
-                        # Here we'll just use an empty pcset since we don't have the actual notes
-                        pcs = []
+                        # Decode pcset from predictions
+                        pcset_idx = preds["pcset"].argmax(dim=-1)[i].item()
+                        pcs = PCSETS[pcset_idx] if pcset_idx < len(PCSETS) else []
 
                         # Get predicted RN using argmax for the numerator parameter
                         rn_argmax_idx = preds["romanNumeral"].argmax(dim=-1)[i].item()
