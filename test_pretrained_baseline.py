@@ -37,36 +37,27 @@ RN_V1 = None
 KEYS_V1 = None
 
 try:
-    import sys
-    import importlib.util
-
-    # Direct file import to avoid module-level dependencies
-    spec_latest = importlib.util.spec_from_file_location(
-        "chord_representations_latest",
-        "chordgnn/utils/chord_representations_latest.py"
+    # Import directly from the already-loaded chordgnn package
+    # Since 'import chordgnn as st' works above, these should work too
+    from chordgnn.utils.chord_representations_latest import (
+        resolveRomanNumeralCosine,
+        COMMON_ROMAN_NUMERALS as RN_LATEST,
+        KEYS as KEYS_LATEST
     )
-    if spec_latest and spec_latest.loader:
-        chord_rep_latest = importlib.util.module_from_spec(spec_latest)
-        spec_latest.loader.exec_module(chord_rep_latest)
-        resolveRomanNumeralCosine = chord_rep_latest.resolveRomanNumeralCosine
-        RN_LATEST = chord_rep_latest.COMMON_ROMAN_NUMERALS
-        KEYS_LATEST = chord_rep_latest.KEYS
-
-    spec_v1 = importlib.util.spec_from_file_location(
-        "chord_representations",
-        "chordgnn/utils/chord_representations.py"
+    from chordgnn.utils.chord_representations import (
+        resolveRomanNumeralCosine as resolveRomanNumeralCosine_v1,
+        COMMON_ROMAN_NUMERALS as RN_V1,
+        KEYS as KEYS_V1
     )
-    if spec_v1 and spec_v1.loader:
-        chord_rep_v1 = importlib.util.module_from_spec(spec_v1)
-        spec_v1.loader.exec_module(chord_rep_v1)
-        resolveRomanNumeralCosine_v1 = chord_rep_v1.resolveRomanNumeralCosine
-        RN_V1 = chord_rep_v1.COMMON_ROMAN_NUMERALS
-        KEYS_V1 = chord_rep_v1.KEYS
-
     COSINE_AVAILABLE = True
     print("✓ Cosine resolution functions loaded successfully")
+except ImportError as e:
+    print(f"⚠ Warning: Could not import cosine functions (ImportError): {e}")
+    print("  This is expected if music21 or other dependencies are missing.")
+    print("  Cosine resolution will be skipped, but direct RNalt evaluation will still work.")
+    COSINE_AVAILABLE = False
 except Exception as e:
-    print(f"⚠ Warning: Could not import cosine similarity functions: {e}")
+    print(f"⚠ Warning: Could not import cosine functions (unexpected error): {e}")
     COSINE_AVAILABLE = False
 
 # ----------------------------
