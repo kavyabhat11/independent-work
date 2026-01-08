@@ -428,8 +428,15 @@ def main():
             edges2, edge_type2 = add_reverse_edges_from_edge_index(edges, edge_type)
             onset_idx = unique_onsets(onset_div)
 
-            # Forward pass - use model(...) not model.module(...)
-            out = model((x, edges2, edge_type2, onset_edges, onset_idx, None))
+            # Forward pass
+            if use_frozen:
+                # For finetuned models: frozen_model then module
+                x_encoded = model.frozen_model((x, edges2, edge_type2, onset_edges, onset_idx, None))
+                out = model.module(x_encoded)
+            else:
+                # For base models: direct module call
+                out = model.module((x, edges2, edge_type2, onset_edges, onset_idx, None))
+
             preds = out if isinstance(out, dict) else (out[0] if isinstance(out, (list, tuple)) else out)
 
             # One-time sanity check
